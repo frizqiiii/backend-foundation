@@ -10,14 +10,19 @@ RUN apk add --no-cache openssl libc6-compat
 
 # ============================================================================
 # STAGE 1: deps — install SELURUH dependency (termasuk devDependencies),
-# dipakai untuk proses build & type-checking.
+# dipakai untuk proses build & type-checking. TIDAK boleh --omit=dev di sini
+# karena stage `builder` butuh typescript/ts-node dkk untuk compile.
 # ============================================================================
 FROM base AS deps
 COPY package.json package-lock.json ./
 # python3/make/g++ dibutuhkan node-gyp untuk kompilasi native addon (bcrypt).
-# Dihapus lagi setelah instalasi agar layer ini tetap seminimal mungkin.
+# --ignore-scripts: melewati SELURUH lifecycle script (termasuk `prepare`
+# husky) — tidak relevan di image Docker, dan husky butuh git repo yang
+# tidak ada di sini. HUSKY=0 saja TIDAK cukup: kalau husky-nya sendiri
+# tidak terinstal (lihat stage prod-deps di bawah), script `prepare`
+# akan mencoba menjalankan binary yang tidak ada sama sekali.
 RUN apk add --no-cache --virtual .build-deps python3 make g++ \
-  && npm ci --omit=dev \
+  && npm ci --ignore-scripts \
   && apk del .build-deps
 
 # ============================================================================
@@ -38,9 +43,13 @@ RUN npm run build
 # ============================================================================
 FROM base AS prod-deps
 COPY package.json package-lock.json ./
+# --ignore-scripts: sama seperti stage `deps` — di sini bahkan lebih wajib,
+# karena husky (devDependency) sengaja TIDAK terinstal via --omit=dev,
+# jadi script `prepare` pasti gagal ("husky: not found") kalau tidak dilewati.
 RUN apk add --no-cache --virtual .build-deps python3 make g++ \
-  && HUSKY=0 npm ci --omit=dev \
+  && npm ci --omit=dev --ignore-scripts \
   && apk del .build-deps
+
 # ============================================================================
 # STAGE 4: runner — image final yang benar-benar dijalankan di production.
 # Hanya membawa: node_modules production, hasil compile (dist), Prisma Client
