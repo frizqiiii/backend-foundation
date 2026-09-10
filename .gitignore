@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Environment & secrets — JANGAN PERNAH commit file .env asli.
+# .env.example TETAP di-track sebagai template.
+.env
+.env.*
+!.env.example
+
+# Prisma
+# (schema.prisma & migrations/ tetap di-track; ini hanya file lokal)
+prisma/*.db
+
+# Test & coverage
+coverage/
+.nyc_output/
+
+# Mutation testing (Stryker) output
+.stryker-tmp/
+reports/mutation/
+
+# Contract testing (Pact) output
+pacts/
+pact-logs/
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# Database backup (bisa berisi data production — lihat docs/backup-restore-guide.md)
+backups/*.dump
+backups/*.dump.meta
+
+# Local object storage (OBJECT_STORAGE_PROVIDER=local)
+local-uploads/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Husky (dibuat ulang otomatis oleh `npm run prepare`)
+.husky/_/

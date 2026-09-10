@@ -1,0 +1,162 @@
+version: '3.9'
+
+# Compose untuk simulasi/deployment PRODUCTION — beda signifikan dari
+# docker-compose.yml (dev):
+# - backend_app pakai stage `runner` (image final yang ringan, TANPA
+#   devDependencies/source TypeScript), bukan stage `deps`.
+# - TIDAK ADA bind mount source code — image bersifat immutable,
+#   persis seperti yang akan berjalan di server sungguhan.
+# - Port PostgreSQL TIDAK dipublish ke host — hanya bisa diakses dari
+#   dalam `backend-network`, memperkecil permukaan serangan.
+# - `restart: always` (bukan `unless-stopped`) — container harus tetap
+#   coba bangkit lagi bahkan setelah reboot server/Docker daemon.
+#
+# Migrasi database SENGAJA tidak dijalankan otomatis di startup
+# `backend_app` — image production tidak membawa Prisma CLI (hanya
+# `@prisma/client` runtime, lihat Dockerfile stage `prod-deps`), dan
+# menjalankan migrasi dari setiap replica saat scaling akan berisiko
+# race condition. Jalankan migrasi sebagai langkah terpisah lewat
+# service `migrate` di bawah (lihat instruksi CLI setelah file ini).
+
+networks:
+  backend-network:
+    # Sama seperti `docker-compose.yml` (dev) — nama eksplisit supaya
+    # `docker-compose.monitoring.yml` bisa bergabung lewat
+    # `external: true` dengan nama yang deterministik, terlepas dari
+    # nama project Compose yang dipakai.
+    name: backend-network
+    driver: bridge
+
+services:
+  postgres_db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER:-app_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD wajib diisi di .env production}
+      POSTGRES_DB: ${DB_NAME:-app_db}
+    # TIDAK ADA `ports:` di sini — sengaja. Database hanya bisa diakses
+    # dari service lain di `backend-network`, tidak dari luar host.
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend-network
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${DB_USER:-app_user} -d ${DB_NAME:-app_db}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    # TIDAK ADA `ports:` — sama seperti postgres_db, hanya bisa
+    # diakses dari dalam `backend-network`. `--requirepass` menambah
+    # satu lapis keamanan lagi untuk cache di lingkungan production
+    # (di dev, tanpa password, karena hanya jalan lokal).
+    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD wajib diisi di .env production}
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend-network
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli -a "$$REDIS_PASSWORD" ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend_app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    restart: always
+    ports:
+      - '3000:3000'
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-app_user}:${DB_PASSWORD}@postgres_db:5432/${DB_NAME:-app_db}?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      NODE_ENV: production
+    networks:
+      - backend-network
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Healthcheck di sini opsional (Dockerfile sudah mendefinisikan
+    # HEALTHCHECK native) — dicantumkan ulang agar Compose langsung
+    # menampilkan status "healthy/unhealthy" tanpa perlu inspect image.
+    #
+    # P7 (Infrastructure Audit) — SEBELUMNYA tidak ada batas resource
+    # sama sekali di service ini: satu container yang bocor memori atau
+    # kebanjiran traffic bisa menghabiskan SELURUH CPU/RAM host Docker
+    # (di deployment non-Kubernetes ini biasanya dipakai bersama
+    # `postgres_db`/`redis`/`worker_app` di mesin yang sama), menjatuhkan
+    # semuanya sekaligus, bukan cuma container yang bermasalah.
+    # `mem_limit`/`cpus` (sintaks lama Compose, BUKAN `deploy.resources`
+    # yang HANYA berlaku di mode Swarm) adalah cara yang benar untuk
+    # menegakkan batas ini lewat `docker compose up` biasa. Angka
+    # disamakan dengan `resources.limits` di `k8s/deployment.yaml` agar
+    # perilaku kedua target deployment konsisten.
+    mem_limit: 512m
+    cpus: 1.0
+
+  # Proses worker — image RUNNER yang sama persis dengan backend_app
+  # (sudah membawa dist/worker.js dari hasil build yang sama), HANYA
+  # command yang berbeda. Sengaja container terpisah (bukan proses
+  # kedua di dalam backend_app) supaya bisa di-scale independen (mis.
+  # 1 replica API + 3 replica worker saat volume email tinggi) dan
+  # supaya crash di worker tidak ikut menjatuhkan API.
+  worker_app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    command: node dist/worker.js
+    restart: always
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-app_user}:${DB_PASSWORD}@postgres_db:5432/${DB_NAME:-app_db}?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      NODE_ENV: production
+    networks:
+      - backend-network
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # P7 — sama alasannya dengan `backend_app` di atas; angka disamakan
+    # dengan `resources.limits` di `k8s/worker-deployment.yaml`.
+    mem_limit: 512m
+    cpus: 0.5
+
+  # Jalankan migrasi SEKALI secara eksplisit sebelum/scaat deploy:
+  #   docker compose -f docker-compose.prod.yml run --rm migrate
+  # Memakai stage `builder` (satu-satunya stage yang membawa Prisma
+  # CLI lengkap) — service ini TIDAK ikut start otomatis saat
+  # `docker compose up`.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    profiles: ['tools']
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-app_user}:${DB_PASSWORD}@postgres_db:5432/${DB_NAME:-app_db}?schema=public
+    networks:
+      - backend-network
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+    command: npx prisma migrate deploy
+
+volumes:
+  postgres_data:
+  redis_data:

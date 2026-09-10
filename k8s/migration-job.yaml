@@ -1,0 +1,73 @@
+# Phase 20 — Auto Migration. SENGAJA berupa Job TERPISAH (dijalankan
+# manual/lewat pipeline SEBELUM apply `deployment.yaml` versi baru),
+# BUKAN init container di dalam `deployment.yaml` — alasan PERSIS
+# sama dengan yang sudah didokumentasikan di
+# `docker-compose.prod.yml`: kalau migration jalan sebagai init
+# container, dan `replicas: 3`, migration akan mencoba jalan 3 KALI
+# BERSAMAAN (satu per Pod yang di-restart) — `prisma migrate deploy`
+# memang idempotent (aman dijalankan berkali-kali), TAPI 3 proses
+# yang mencoba ALTER TABLE bersamaan tetap berisiko race
+# condition/lock contention yang tidak perlu. Job ini hanya
+# menjalankan SATU Pod, SEKALI, sampai selesai.
+#
+# Cara pakai (manual):
+#   kubectl apply -f k8s/migration-job.yaml
+#   kubectl wait --for=condition=complete job/backend-foundation-migrate --timeout=120s
+#   kubectl delete -f k8s/migration-job.yaml   # Job tidak auto-hapus, bersihkan supaya `kubectl apply -f k8s/migration-job.yaml` berikutnya tidak bentrok nama.
+#
+# Lewat Helm (`helm/backend-foundation`), langkah manual di atas
+# OTOMATIS — lihat `helm/backend-foundation/templates/migration-job.yaml`
+# yang memakai Helm hook `pre-upgrade,pre-install` supaya migration
+# SELALU jalan (dan SELESAI) sebelum `helm upgrade` mulai me-rolling-
+# update Deployment API/worker ke image versi baru.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: backend-foundation-migrate
+  labels:
+    app.kubernetes.io/name: backend-foundation
+    app.kubernetes.io/component: migration
+spec:
+  backoffLimit: 2
+  # `activeDeadlineSeconds` — migration yang menggantung lebih dari 5
+  # menit lebih mungkin macet (lock database) daripada memang butuh
+  # waktu selama itu; lebih baik Job gagal jelas (lalu pipeline
+  # deploy berhenti, TIDAK lanjut ke Deployment versi baru) daripada
+  # menggantung tanpa batas.
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: backend-foundation
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: migrate
+          # Stage `builder` (BUKAN `runner`) — SATU-SATUNYA stage
+          # yang membawa Prisma CLI lengkap (`runner` sengaja hanya
+          # `@prisma/client` runtime, lihat komentar Dockerfile) —
+          # persis sama alasannya dengan service `migrate` di
+          # `docker-compose.prod.yml`.
+          image: backend-foundation:builder-latest # override lewat Helm values.yaml (migration.image) — build target `builder` perlu di-tag terpisah dari image `runner` yang dipakai deployment.yaml/worker-deployment.yaml.
+          imagePullPolicy: IfNotPresent
+          command: ['npx', 'prisma', 'migrate', 'deploy']
+          envFrom:
+            - configMapRef:
+                name: backend-foundation-config
+            - secretRef:
+                name: backend-foundation-secret
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ['ALL']

@@ -1,0 +1,136 @@
+version: '3.9'
+
+# Compose untuk LOCAL DEVELOPMENT (hot-reload). Untuk deployment
+# production, lihat docker-compose.prod.yml — beda target build,
+# beda kebijakan networking, tidak ada bind mount source code.
+
+networks:
+  backend-network:
+    # Nama eksplisit (bukan dibiarkan default project-prefixed seperti
+    # `backend-foundation_backend-network`) — supaya
+    # `docker-compose.monitoring.yml` (file Compose TERPISAH, lihat
+    # Phase 4) bisa bergabung ke jaringan yang SAMA lewat
+    # `external: true` tanpa perlu menebak-nebak nama project Compose
+    # yang dipakai saat stack utama pertama kali dijalankan.
+    name: backend-network
+    driver: bridge
+
+services:
+  postgres_db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: app_user
+      POSTGRES_PASSWORD: app_password
+      POSTGRES_DB: app_db
+    ports:
+      - '5432:5432'
+    volumes:
+      # Data persist di named volume — data tidak hilang saat container
+      # di-recreate (`docker compose down` tanpa flag -v).
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend-network
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U app_user -d app_db']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      # Persist cache antar-restart container — opsional secara
+      # semantik (cache boleh hilang kapan saja tanpa merusak
+      # aplikasi), tapi tetap nyaman untuk development supaya tidak
+      # perlu "memanaskan" cache ulang tiap kali container di-restart.
+      - redis_data:/data
+    networks:
+      - backend-network
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend_app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # Target "deps": stage yang sudah punya SELURUH dependency
+      # (termasuk devDependencies: ts-node-dev, prisma CLI, dsb) tanpa
+      # menjalankan build production — cocok untuk mode development.
+      target: deps
+    command: sh -c "npx prisma generate && npm run dev"
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
+    env_file:
+      - .env
+    environment:
+      # Override eksplisit agar aplikasi terhubung ke service Postgres
+      # lewat NAMA SERVICE (`postgres_db`), diselesaikan otomatis oleh
+      # DNS internal Docker Compose di jaringan `backend-network` —
+      # bukan `localhost`, dan bukan IP yang bisa berubah-ubah.
+      DATABASE_URL: postgresql://app_user:app_password@postgres_db:5432/app_db?schema=public
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: development
+    volumes:
+      # Bind mount seluruh project agar perubahan file di host langsung
+      # tercermin di container (dipakai oleh ts-node-dev untuk hot-reload).
+      - .:/app
+      # Anonymous volume: mencegah node_modules hasil bind mount di atas
+      # menimpa node_modules yang sudah ter-install di dalam image
+      # (terutama krusial untuk native addon seperti bcrypt yang
+      # di-compile khusus untuk Linux, beda dengan node_modules di host
+      # macOS/Windows).
+      - /app/node_modules
+    networks:
+      - backend-network
+    healthcheck:
+      test: ['CMD-SHELL', 'wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker_app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: deps
+    # Sama seperti `backend_app`, tapi menjalankan proses WORKER
+    # (`worker.ts`), BUKAN server HTTP — dua proses ini SENGAJA
+    # dipisah, bukan digabung dalam satu container, supaya beban
+    # pemrosesan job (kirim email, dst) tidak pernah bersaing
+    # resource dengan proses yang melayani HTTP request.
+    command: sh -c "npx prisma generate && npm run worker:dev"
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://app_user:app_password@postgres_db:5432/app_db?schema=public
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: development
+    volumes:
+      - .:/app
+      - /app/node_modules
+    networks:
+      - backend-network
+    depends_on:
+      postgres_db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:

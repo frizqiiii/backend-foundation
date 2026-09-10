@@ -1,0 +1,16 @@
+# Auto-provisioning dashboard Grafana — mendaftarkan folder
+# `monitoring/grafana/dashboards/` sebagai sumber dashboard, supaya
+# `backend-overview.json` di folder tersebut otomatis muncul di
+# Grafana tanpa perlu import manual lewat UI.
+apiVersion: 1
+
+providers:
+  - name: 'backend-foundation'
+    orgId: 1
+    folder: 'Backend Foundation'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/json

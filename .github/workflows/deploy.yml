@@ -1,0 +1,34 @@
+name: Deploy
+
+# Sesuai deploy/README.md & komentar di deploy/scripts/deploy.sh:
+# trigger di tag push, SSH ke VPS, jalankan deploy.sh yang sudah ada
+# di repo (logic backup/pull/install/migrate/build/reload/health-check/
+# rollback TIDAK diduplikasi di sini — semuanya di deploy.sh).
+#
+# WAJIB diisi sebelum tag pertama di-push (Settings > Secrets and
+# variables > Actions, di level repository):
+#   VPS_HOST     — hostname/IP server
+#   VPS_USER     — user SSH untuk deploy
+#   VPS_SSH_KEY  — private key SSH (format PEM)
+#   VPS_APP_PATH — path absolut project ini di VPS
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd "${{ secrets.VPS_APP_PATH }}"
+            ./deploy/scripts/deploy.sh

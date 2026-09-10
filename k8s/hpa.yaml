@@ -1,0 +1,59 @@
+# Phase 20 — HPA HANYA untuk Deployment API, SENGAJA TIDAK untuk
+# worker. Alasan: beban API berkorelasi LANGSUNG dengan jumlah
+# request HTTP masuk (CPU naik seketika saat traffic naik) — pola
+# yang pas untuk autoscaling reaktif. Beban worker sebaliknya
+# ditentukan PANJANG ANTRIAN BullMQ (jumlah job waiting), bukan
+# CPU/memori Pod worker itu sendiri (worker yang idle CPU-nya rendah
+# meski antriannya menumpuk) — autoscaling worker yang benar butuh
+# KEDA (scaler berbasis panjang antrian Redis), bukan HPA bawaan
+# Kubernetes yang hanya memahami metrik CPU/memori/custom-metrics
+# generik. Di luar cakupan Phase 20 ini — dicatat sebagai kapabilitas
+# lanjutan, bukan terlewat.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-foundation-api
+  labels:
+    app.kubernetes.io/name: backend-foundation
+    app.kubernetes.io/component: api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend-foundation-api
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    # Scale-up CEPAT (0 detik stabilization) — traffic spike butuh
+    # respons instan. Scale-down LAMBAT (5 menit) — SENGAJA, mencegah
+    # "flapping" (naik-turun replica berulang) kalau traffic
+    # berfluktuasi naik-turun cepat dalam rentang pendek; lebih baik
+    # sesaat over-provisioned daripada Pod baru terus dimatikan-
+    # dinyalakan ulang yang masing-masing butuh waktu warm-up
+    # (`readinessProbe.initialDelaySeconds`) sebelum benar-benar
+    # melayani traffic.
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120

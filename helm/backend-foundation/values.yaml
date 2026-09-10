@@ -1,0 +1,115 @@
+# Phase 20 — default values. Override lewat `-f values-production.yaml`
+# atau `--set key=value` per environment (staging/production biasanya
+# BEDA replica count, resource limits, host Ingress, dst).
+
+image:
+  repository: backend-foundation
+  tag: latest
+  # Tag khusus untuk stage `builder` Dockerfile (Prisma CLI lengkap)
+  # — dipakai `migration.job` di bawah, BUKAN oleh api/worker.
+  migrationTag: builder-latest
+  pullPolicy: IfNotPresent
+
+api:
+  replicas: 3
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: 1000m, memory: 512Mi }
+  terminationGracePeriodSeconds: 15
+
+worker:
+  replicas: 2
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  terminationGracePeriodSeconds: 15
+
+# Auto Migration (Phase 20) — Job dijalankan sebagai Helm hook
+# `pre-install,pre-upgrade` (lihat templates/migration-job.yaml).
+# `enabled: false` untuk situasi migration WAJIB dijalankan manual/
+# lewat pipeline CI terpisah (mis. cluster dengan banyak tim yang
+# tidak semuanya boleh punya akses ALTER TABLE otomatis).
+migration:
+  enabled: true
+  activeDeadlineSeconds: 300
+  backoffLimit: 2
+
+hpa:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+ingress:
+  enabled: true
+  className: nginx
+  host: api.example.com
+  tls:
+    enabled: true
+    secretName: backend-foundation-tls
+  clusterIssuer: letsencrypt-prod
+  # Rate limit di level Ingress (Phase 18 punya lapisan sendiri di
+  # level aplikasi — ini lapisan TAMBAHAN, lihat komentar
+  # `k8s/ingress.yaml`).
+  rateLimitRps: 50
+
+# Canary Deployment (Phase 20) — MATI default. Nyalakan + isi
+# `canary.image.tag` (versi yang mau diuji) saat butuh rollout
+# bertahap. Lihat `k8s/README.md` untuk alur pemakaian penuh.
+canary:
+  enabled: false
+  weight: 0
+  image:
+    tag: canary
+  replicas: 1
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: 1000m, memory: 512Mi }
+
+# ConfigMap — non-sensitif. SETIAP key di sini WAJIB match nama env
+# var yang divalidasi `src/shared/config/env.ts` (lihat
+# `k8s/configmap.yaml` untuk daftar lengkap + rationale per key).
+config:
+  NODE_ENV: production
+  PORT: '3000'
+  LOG_LEVEL: info
+  JWT_EXPIRES_IN: 15m
+  BCRYPT_SALT_ROUNDS: '10'
+  CORS_ALLOWED_ORIGINS: https://app.example.com
+  EMAIL_PROVIDER: resend
+  SMS_PROVIDER: twilio
+  PUSH_PROVIDER: fcm
+  PAYMENT_PROVIDER: stripe
+  SEARCH_PROVIDER: meilisearch
+  OBJECT_STORAGE_PROVIDER: s3
+  EMAIL_QUEUE_CONCURRENCY: '5'
+  NOTIFICATION_QUEUE_CONCURRENCY: '5'
+  EXPORT_QUEUE_CONCURRENCY: '2'
+  EMAIL_QUEUE_RATE_LIMIT_MAX: '10'
+  EMAIL_QUEUE_RATE_LIMIT_DURATION_MS: '60000'
+  DATABASE_CONNECTION_LIMIT: '0'
+  DATABASE_POOL_TIMEOUT_SECONDS: '0'
+  SHUTDOWN_TIMEOUT_MS: '10000'
+  AWS_REGION: ap-southeast-1
+  RESEND_FROM_EMAIL: noreply@example.com
+  TWILIO_FROM_NUMBER: '+10000000000'
+  MEILISEARCH_HOST: http://meilisearch:7700
+  OTEL_ENABLED: 'false'
+  OTEL_SERVICE_NAME: backend-foundation
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.observability.svc.cluster.local:4318/v1/traces
+  GITHUB_CLIENT_ID: ''
+  GOOGLE_CLIENT_ID: ''
+  QUEUE_DASHBOARD_USER: admin
+
+# Secret — KOSONG SENGAJA di values.yaml (values.yaml LAZIM ikut
+# ter-commit ke Git). Isi lewat SALAH SATU:
+#   --set-string secrets.JWT_SECRET=xxx (tidak direkomendasikan, muncul di shell history)
+#   -f values-secrets.yaml (file TERPISAH, masuk .gitignore)
+#   External Secrets Operator (rekomendasi production sungguhan — lihat k8s/secret.yaml)
+secrets: {}
+#   DATABASE_URL: ""
+#   REDIS_URL: ""
+#   JWT_SECRET: ""
+#   ENCRYPTION_KEY: ""
+#   ... (daftar lengkap field lihat k8s/secret.yaml)

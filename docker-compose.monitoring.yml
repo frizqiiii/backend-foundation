@@ -1,0 +1,192 @@
+version: '3.9'
+
+# Stack monitoring TERPISAH dari stack utama (`docker-compose.yml` /
+# `docker-compose.prod.yml`) — dijalankan sebagai file Compose
+# TAMBAHAN, bukan digabung jadi satu file besar, supaya:
+# 1. Monitoring bisa dimatikan/di-restart independen tanpa mengganggu
+#    backend_app/worker_app yang sedang melayani traffic sungguhan.
+# 2. Stack utama tetap bisa dijalankan sendirian (mis. di environment
+#    development ringan) tanpa "dipaksa" ikut menjalankan Prometheus +
+#    Grafana yang lumayan berat kalau memang belum dibutuhkan.
+#
+# CARA MENJALANKAN — stack utama HARUS sudah jalan lebih dulu (network
+# `backend-network` dibuat oleh stack utama, lihat `networks:` di
+# bawah yang menandainya `external: true`):
+#
+#   docker compose up -d                              # stack utama dulu
+#   docker compose -f docker-compose.monitoring.yml up -d   # lalu monitoring
+#
+# Akses setelah keduanya jalan:
+#   Prometheus   : http://localhost:9090
+#   Grafana      : http://localhost:3001  (login awal: admin / lihat GF_SECURITY_ADMIN_PASSWORD)
+#   Alertmanager : http://localhost:9093
+#   Jaeger UI    : http://localhost:16686 (distributed tracing, Phase 13 — lihat docs/observability-guide.md)
+
+networks:
+  backend-network:
+    external: true
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Phase 13 — alert & recording rules (SLO burn-rate, service
+      # down, dst), lihat isi lengkapnya di file tersebut.
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      # Data time-series persist di named volume — history metric
+      # tidak hilang setiap kali container Prometheus di-recreate.
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      # Retensi 15 hari — cukup untuk investigasi insiden & tren
+      # jangka pendek tanpa membiarkan disk tumbuh tanpa batas. Naikkan
+      # kalau kebutuhan retensi jangka panjang jadi prioritas (idealnya
+      # lewat remote-write ke storage jangka panjang, bukan menaikkan
+      # retensi lokal tanpa batas).
+      - '--storage.tsdb.retention.time=15d'
+    ports:
+      - '9090:9090'
+    networks:
+      - backend-network
+    healthcheck:
+      test: ['CMD-SHELL', 'wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    restart: unless-stopped
+    ports:
+      # 3001, BUKAN 3000 — port 3000 sudah dipakai `backend_app` di
+      # stack utama; keduanya berjalan bersamaan di host yang sama.
+      - '3001:3000'
+    environment:
+      # Kredensial admin awal — GANTI lewat `.env` di production
+      # (`GF_SECURITY_ADMIN_PASSWORD=...`), jangan biarkan default ini
+      # dipakai di lingkungan yang bisa diakses publik.
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      # Signup publik dimatikan — Grafana ini untuk tim internal,
+      # bukan aplikasi multi-tenant.
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards/json:ro
+    networks:
+      - backend-network
+    depends_on:
+      prometheus:
+        condition: service_healthy
+
+  # Redis exporter — tanpa ini, panel "Redis Status" di dashboard
+  # (`redis_up`) tidak akan punya metric sama sekali untuk ditampilkan.
+  # `REDIS_PASSWORD` boleh kosong (dev tanpa password); di production
+  # isi lewat `.env` yang sama dengan `docker-compose.prod.yml`.
+  redis_exporter:
+    image: oliver006/redis_exporter:v1.62.0
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    networks:
+      - backend-network
+
+  # PostgreSQL exporter — sumber metric `pg_up` untuk panel "Database
+  # Status", plus metric koneksi/replikasi/dsb bawaan exporter ini
+  # yang bisa dieksplorasi lebih lanjut di Grafana Explore.
+  postgres_exporter:
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: 'postgresql://${DB_USER:-app_user}:${DB_PASSWORD:-app_password}@postgres_db:5432/${DB_NAME:-app_db}?sslmode=disable'
+    networks:
+      - backend-network
+
+  # Node exporter (Phase 20 — Alerting Finalization) — metrik LEVEL
+  # HOST (CPU/Memory/Disk), sumber untuk alert `HostCpuUsageHigh`/
+  # `HostMemoryUsageHigh`/`HostDiskSpaceLow` di `monitoring/prometheus/alerts.yml`.
+  # SEBELUM Phase 20, tidak ada exporter host sama sekali — Prometheus
+  # hanya tahu kesehatan APLIKASI (backend_app/Redis/Postgres), buta
+  # total terhadap kesehatan MESIN yang menjalankannya.
+  #
+  # Tiga bind mount `:ro` di bawah adalah pola RESMI node_exporter
+  # untuk membaca metrik host DARI DALAM container (`/proc`, `/sys`,
+  # root filesystem) — SEMUANYA read-only, node_exporter tidak pernah
+  # menulis ke host. `--path.rootfs=/host` memberitahu node_exporter
+  # ke mana root host di-mount di DALAM container-nya sendiri.
+  #
+  # CATATAN PENTING kalau target deploy sungguhan adalah Kubernetes
+  # (lihat `helm/` — bukan Docker Compose): node_exporter di sana HARUS
+  # dijalankan sebagai **DaemonSet** (satu pod per node, bukan satu
+  # Deployment) supaya metrik host terkumpul dari SEMUA node cluster,
+  # bukan cuma satu node tempat pod ini kebetulan di-schedule — definisi
+  # DaemonSet BELUM ada di `helm/` chart ini (di luar cakupan Phase 20,
+  # tercatat sebagai gap yang diketahui, bukan terlewat).
+  node_exporter:
+    image: prom/node-exporter:v1.8.2
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/host/root'
+      # Default node_exporter mencoba scrape SEMUA mount point di
+      # dalam container (termasuk overlay filesystem Docker sendiri,
+      # yang tidak relevan/bisa bikin metric disk membingungkan) —
+      # pola exclude ini SAMA dengan rekomendasi resmi node_exporter
+      # untuk berjalan di dalam container.
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - backend-network
+
+  # Alertmanager (Phase 13) — menerima alert dari Prometheus (lihat
+  # `alerting:` di prometheus.yml), lalu mengurus grouping/routing/
+  # dedup ke channel notifikasi (default: webhook internal, lihat
+  # `monitoring/alertmanager/alertmanager.yml`).
+  alertmanager:
+    image: prom/alertmanager:v0.28.0
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+    ports:
+      - '9093:9093'
+    networks:
+      - backend-network
+
+  # Jaeger (Phase 13) — backend distributed tracing untuk development
+  # lokal. Image `all-in-one` menjalankan collector + query UI + storage
+  # in-memory dalam SATU container — cocok untuk lokal/staging, TIDAK
+  # untuk production (trace hilang setiap container di-restart; di
+  # production arahkan `OTEL_EXPORTER_OTLP_ENDPOINT` ke collector yang
+  # storage-nya persisten, mis. Jaeger dengan backend Elasticsearch/
+  # Cassandra, atau Grafana Tempo).
+  #
+  # Menerima trace lewat OTLP/HTTP di port 4318 — port yang SAMA dengan
+  # default `OTEL_EXPORTER_OTLP_ENDPOINT` di `env.ts`, jadi tidak perlu
+  # konfigurasi tambahan apa pun di sisi aplikasi untuk development
+  # lokal selain `OTEL_ENABLED=true`.
+  jaeger:
+    image: jaegertracing/all-in-one:1.65.0
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: 'true'
+    ports:
+      - '16686:16686' # Jaeger UI
+      - '4318:4318' # OTLP/HTTP receiver
+    networks:
+      - backend-network

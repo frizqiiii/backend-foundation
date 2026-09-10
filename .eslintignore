@@ -1,0 +1,7 @@
+node_modules
+dist
+coverage
+prisma/client
+generated
+*.d.ts
+performance-tests

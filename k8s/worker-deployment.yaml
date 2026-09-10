@@ -1,0 +1,67 @@
+# Phase 20 — Deployment proses worker (`node dist/worker.js`,
+# memproses queue BullMQ: email/notification/webhook-delivery/export
+# — lihat `src/worker.ts`). TIDAK PUNYA Service/Ingress sama sekali
+# (SENGAJA) — worker tidak pernah menerima traffic HTTP masuk, hanya
+# menarik job dari Redis. `livenessProbe` di sini memakai `exec`
+# (BUKAN httpGet seperti Deployment API) karena proses worker TIDAK
+# membuka port HTTP sama sekali — cek liveness lewat ada/tidaknya
+# proses Node yang masih berjalan.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-foundation-worker
+  labels:
+    app.kubernetes.io/name: backend-foundation
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1 # Beda dari Deployment API (`maxUnavailable: 0`) — SENGAJA lebih longgar: job BullMQ yang gagal diproses SATU worker akan otomatis di-retry worker LAIN (lihat `defaultJobOptions.attempts` di tiap `shared/queue/*.ts`), beda dari request HTTP yang butuh availability instan.
+      maxSurge: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend-foundation
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: backend-foundation
+        app.kubernetes.io/component: worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: worker
+          image: backend-foundation:latest # SAMA image dengan Deployment API — satu hasil build, beda command (persis pola `worker_app` di docker-compose.prod.yml).
+          imagePullPolicy: IfNotPresent
+          command: ['node', 'dist/worker.js']
+          envFrom:
+            - configMapRef:
+                name: backend-foundation-config
+            - secretRef:
+                name: backend-foundation-secret
+          livenessProbe:
+            exec:
+              command: ['sh', '-c', 'ps aux | grep "[n]ode dist/worker.js" || exit 1']
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ['ALL']
+      terminationGracePeriodSeconds: 15

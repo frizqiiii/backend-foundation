@@ -1,0 +1,120 @@
+{{- if .Values.canary.enabled }}
+# Lihat `k8s/README.md` bagian "Canary Deployment" untuk alur
+# pemakaian penuh — di Helm, cukup:
+#   helm upgrade backend-foundation ./helm/backend-foundation \
+#     --set canary.enabled=true --set canary.image.tag=v1.5.0-rc1 --set canary.weight=5
+# lalu naikkan `canary.weight` bertahap, dan matikan lagi
+# (`canary.enabled=false`) setelah dipromosikan jadi `image.tag` utama.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-api-canary
+  labels:
+    {{- include "backend-foundation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+    track: canary
+spec:
+  replicas: {{ .Values.canary.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend-foundation
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: api
+      track: canary
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: backend-foundation
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: api
+        track: canary
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: api
+          image: '{{ .Values.image.repository }}:{{ .Values.canary.image.tag }}'
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ['node', 'dist/server.js']
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            {{- if .Values.secrets }}
+            - secretRef:
+                name: {{ .Release.Name }}-secret
+            {{- end }}
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: { path: /ready, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.canary.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ['ALL']
+      terminationGracePeriodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-api-canary
+  labels:
+    {{- include "backend-foundation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+    track: canary
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: backend-foundation
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: api
+    track: canary
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-api-canary
+  labels:
+    {{- include "backend-foundation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+    track: canary
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: 'true'
+    nginx.ingress.kubernetes.io/canary: 'true'
+    nginx.ingress.kubernetes.io/canary-weight: {{ .Values.canary.weight | quote }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts: [{{ .Values.ingress.host }}]
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-api-canary
+                port:
+                  name: http
+{{- end }}
+{{- end }}

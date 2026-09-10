@@ -1,0 +1,843 @@
+// Prisma schema — single source of truth untuk struktur database.
+// Jalankan `npm run prisma:migrate` setiap kali skema ini berubah.
+//
+// Riwayat konsolidasi: model `Event` dan field `User.role` sebelumnya
+// hidup di file terpisah (`schema-upgrade.example.prisma`,
+// `event-model.example.prisma`) yang belum di-merge. Keduanya sudah
+// digabung ke sini sebagai satu-satunya sumber kebenaran skema;
+// kedua file `.example.prisma` tersebut dihapus agar tidak ada dua
+// versi skema yang bisa saling menyimpang di masa depan.
+
+generator client {
+  provider        = "prisma-client-js"
+  // Phase 16 (Enterprise Observability) — wajib untuk mengaktifkan span
+  // OpenTelemetry per-query lewat @prisma/instrumentation. Di Prisma 5.x
+  // ini masih Preview Feature (baru General Availability sejak 6.1);
+  // tanpa flag ini, PrismaInstrumentation terpasang tapi TIDAK akan
+  // menghasilkan span sama sekali (silent no-op, bukan error).
+  previewFeatures = ["tracing"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Role sebagai enum (bukan string bebas seperti di versi awal) agar
+// nilai yang tersimpan di database terjamin valid di level tipe —
+// mencegah typo seperti "Admin" vs "ADMIN" lolos ke database.
+// Implementasi middleware RBAC yang membaca field ini menyusul di
+// tahap Auth (belum dikerjakan pada tahap konsolidasi ini).
+enum Role {
+  ADMIN
+  ORGANIZER
+  USER
+}
+
+// Phase 11 (Enterprise Architecture) — status siklus hidup tenant.
+// SUSPENDED dipisah dari soft-delete (`Tenant.deletedAt`) karena
+// keduanya beda makna operasional: SUSPENDED = tenant masih ada,
+// datanya masih utuh, tapi akses sementara dibekukan (mis. nunggak
+// tagihan) — bisa dipulihkan kapan saja tanpa proses restore. Beda
+// dengan `deletedAt` yang berarti tenant benar-benar diakhiri.
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+// Tenant — akar dari model multi-tenancy (Phase 11). Setiap baris di
+// sini merepresentasikan satu organisasi/pelanggan yang datanya harus
+// terisolasi dari tenant lain.
+//
+// STRATEGI ISOLASI: "shared database, shared schema, discriminator
+// column" — SEMUA tenant berbagi satu database & satu set tabel yang
+// sama, isolasi ditegakkan lewat kolom `tenantId` di setiap tabel
+// yang datanya tenant-scoped (lihat `User.tenantId`,
+// `Product.tenantId`, `Event.tenantId`). Dipilih dibanding pola lain
+// (database-per-tenant, schema-per-tenant) karena: (1) tidak
+// mengubah topologi koneksi/migration yang sudah ada — non-breaking
+// terhadap seluruh infrastruktur Phase 1-10 yang sudah berjalan
+// (satu `DATABASE_URL`, satu Prisma Client, satu siklus migrasi);
+// (2) operasional jauh lebih murah di skala jumlah tenant yang
+// besar (tidak perlu provisioning database/schema baru per tenant);
+// trade-off yang disadari: butuh disiplin KETAT supaya `tenantId`
+// tidak pernah terlewat di satu pun query (lihat
+// `docs/tenant-migration-strategy.md` untuk rencana penegakan
+// bertahap sampai ke tingkat database, mis. Postgres Row-Level
+// Security, di fase lanjutan).
+model Tenant {
+  id        String       @id @default(uuid())
+  // Dipakai sebagai identitas tenant yang terlihat (mis. subdomain
+  // `slug.example.com`, atau header `X-Tenant-ID: slug`) — berbeda
+  // dari `id` (UUID internal) yang tidak dimaksudkan untuk diketik
+  // manusia.
+  slug      String       @unique
+  name      String
+  status    TenantStatus @default(ACTIVE)
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+  // Soft delete — konsisten dengan konvensi `User.deletedAt`/
+  // `Product.deletedAt` di model lain pada schema ini.
+  deletedAt DateTime?    @map("deleted_at")
+
+  users    User[]
+  products Product[]
+  events   Event[]
+  apiKeys  ApiKey[]
+  webhookEndpoints WebhookEndpoint[]
+
+  @@index([status])
+  @@map("tenants")
+}
+
+// Provider OAuth yang didukung — union tertutup, tambah member baru
+// di sini DAN di `OAuthProviderName` (shared/types/oauth-provider.ts)
+// kalau menambah provider baru.
+enum OAuthProvider {
+  GOOGLE
+  GITHUB
+}
+
+model User {
+  id              String    @id @default(uuid())
+  email           String    @unique
+  // Nullable — akun yang HANYA login lewat OAuth (Google/GitHub)
+  // tidak pernah membuat password sama sekali. Login via password
+  // untuk akun semacam ini ditolak secara eksplisit di
+  // AuthService.login (lihat pengecekan `if (!user.password)`).
+  password        String?
+  name            String
+  role            Role      @default(USER)
+  emailVerifiedAt DateTime? @map("email_verified_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  // Soft delete (Phase 3 upgrade) — sama seperti `Event.deletedAt`:
+  // akun yang dihapus admin TIDAK dihapus fisik dari database (harus
+  // tetap ada sebagai referensi `userId` di Product/Event/AuditLog
+  // milik user tsb — ada `onDelete: Cascade` di beberapa relasi yang
+  // TIDAK boleh ikut terpicu hanya karena admin menonaktifkan akun).
+  // SETIAP query baca WAJIB menyertakan `deletedAt: null` (lihat
+  // `UserRepository`) — akun yang sudah di-soft-delete harus berhenti
+  // bisa login/direfresh, persis seolah baris ini benar-benar tidak
+  // ada lagi.
+  deletedAt       DateTime? @map("deleted_at")
+  // Phase 11 — NULLABLE dengan sengaja (bukan wajib) selama masa
+  // transisi: user yang dibuat SEBELUM Phase 11 tidak boleh langsung
+  // "hilang" dari isolasi tenant hanya karena kolom ini baru
+  // ditambahkan. Baris lama dibackfill ke tenant default lewat data
+  // migration (lihat migration `..._multi_tenancy_foundation` dan
+  // `docs/tenant-migration-strategy.md`), TAPI kolom tetap nullable
+  // di level schema supaya proses ini bisa dikerjakan bertahap tanpa
+  // window downtime yang memaksa SEMUA baris punya nilai valid pada
+  // saat migration schema dijalankan. `email` TETAP unik secara
+  // GLOBAL (bukan per-tenant) untuk fase ini — mengubahnya jadi unik
+  // per-tenant adalah keputusan terpisah yang berdampak ke alur login
+  // (lihat catatan di `docs/tenant-migration-strategy.md`).
+  tenantId        String?   @map("tenant_id")
+  tenant          Tenant?   @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  // Phase 12 (Enterprise Security) — Multi-Factor Authentication.
+  // `mfaSecret` disimpan TERENKRIPSI lewat `EncryptionService`
+  // (AES-256-GCM column encryption, lihat
+  // `shared/security/encryption.service.ts`), BUKAN plaintext — beda
+  // dari `password` yang di-HASH satu-arah (bcrypt): secret TOTP
+  // wajib bisa dibaca ulang APA ADANYA untuk menghitung kode yang
+  // diharapkan saat verifikasi, jadi hashing satu-arah tidak berlaku
+  // di sini, tapi menyimpannya polos juga tidak diterima — enkripsi
+  // dua-arah adalah titik tengah yang tepat.
+  //
+  // `mfaSecret` SENGAJA tetap terisi (bukan langsung null) di antara
+  // "setup dimulai" (`MfaService.beginSetup`) dan "setup dikonfirmasi"
+  // (`MfaService.confirmSetup`, yang baru mengubah `mfaEnabled` jadi
+  // `true`) — lihat komentar lengkap di `mfa.service.ts` untuk kenapa
+  // dua langkah ini dipisah.
+  mfaEnabled Boolean   @default(false) @map("mfa_enabled")
+  mfaSecret  String?   @map("mfa_secret")
+  mfaEnabledAt DateTime? @map("mfa_enabled_at")
+
+  products                Product[]
+  events                  Event[]
+  refreshTokens           RefreshToken[]
+  emailVerificationTokens EmailVerificationToken[]
+  passwordResetTokens     PasswordResetToken[]
+  oauthAccounts           OAuthAccount[]
+  fileUploads             FileUpload[]
+  mfaRecoveryCodes        MfaRecoveryCode[]
+  apiKeys                 ApiKey[]
+  webhookEndpoints        WebhookEndpoint[]
+
+  @@index([tenantId])
+  @@map("users")
+}
+
+// Tautan antara satu User dan satu akun provider OAuth eksternal.
+// Model TERPISAH (bukan kolom `googleId`/`githubId` di User) supaya
+// satu User bisa menautkan LEBIH DARI SATU provider di masa depan
+// (mis. daftar via Google, lalu tautkan GitHub juga) tanpa migrasi
+// skema lagi.
+model OAuthAccount {
+  id                String        @id @default(uuid())
+  provider          OAuthProvider
+  // ID unik akun tersebut MENURUT provider-nya (Google `sub`, GitHub
+  // `id` user) — BUKAN email, karena email bisa berganti tapi ID ini
+  // dijamin permanen oleh provider.
+  providerAccountId String        @map("provider_account_id")
+  userId            String        @map("user_id")
+  createdAt         DateTime      @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("oauth_accounts")
+}
+
+// Token verifikasi email — single-use, dihapus setelah dipakai atau
+// digantikan token baru (lihat AuthService.register/resendVerification).
+model EmailVerificationToken {
+  id        String   @id @default(uuid())
+  tokenHash String   @unique @map("token_hash")
+  userId    String   @map("user_id")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("email_verification_tokens")
+}
+
+// Token reset password — single-use, umur pendek (1 jam). Setiap
+// permintaan forgot-password baru MENGGANTIKAN (menghapus) token lama
+// milik user yang sama — mencegah beberapa link reset valid sekaligus.
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  tokenHash String   @unique @map("token_hash")
+  userId    String   @map("user_id")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+// Daftar hitam access token (JWT) yang di-revoke sebelum masa
+// berlaku aslinya habis — mis. saat logout. JWT secara alami stateless
+// (tidak bisa "dicabut"), jadi ini SATU-SATUNYA cara membuat access
+// token tidak berlaku lagi lebih awal. Konsekuensinya: authMiddleware
+// butuh satu query database tambahan di SETIAP request terproteksi
+// (lihat catatan trade-off di auth.middleware.ts). `expiresAt` disalin
+// dari `exp` token asli — begitu lewat, baris ini aman dibersihkan.
+// P3 (Database Audit) — koreksi komentar lama: job pembersihan
+// otomatis SUDAH ada (`cleanup-expired-blacklisted-tokens.job.ts`,
+// terdaftar & aktif di scheduler), memakai index `[expiresAt]` di
+// bawah. Komentar sebelumnya di sini ("belum ada job pembersihan")
+// sudah usang sejak job itu ditambahkan — dokumentasi yang tidak
+// diperbarui bisa membuat audit berikutnya salah menandai ini sebagai
+// gap yang masih terbuka, padahal sudah selesai.
+model BlacklistedToken {
+  id        String   @id @default(uuid())
+  jti       String   @unique
+  userId    String   @map("user_id")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([expiresAt])
+  @@map("blacklisted_tokens")
+}
+
+// Refresh token disimpan sebagai HASH (SHA-256), bukan plaintext —
+// jika database bocor, token asli tidak bisa direkonstruksi.
+// Model terpisah (bukan field tunggal di User) sengaja dipilih agar
+// satu user bisa punya banyak sesi aktif (multi-device), dan tiap
+// sesi bisa di-revoke individual tanpa memengaruhi sesi lain.
+model RefreshToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique @map("token_hash")
+  userId    String    @map("user_id")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  // Device tracking (Phase 7) — diisi dari header User-Agent & IP
+  // requester SAAT token ini diterbitkan (login ATAU rotasi refresh).
+  // Nullable karena baris LAMA (sebelum kolom ini ada) tidak punya
+  // nilai untuk field ini — migrasi tidak melakukan backfill data yang
+  // memang tidak pernah tercatat. Satu baris RefreshToken secara
+  // efektif MEREPRESENTASIKAN satu sesi/device — daftar baris aktif
+  // milik satu user (`revokedAt: null`, belum `expiresAt`) ITULAH
+  // "daftar device yang sedang login", tidak perlu tabel session
+  // terpisah.
+  userAgent String?   @map("user_agent")
+  ipAddress String?   @map("ip_address")
+  // Token Family (Phase 9 upgrade) — SATU nilai ini tetap SAMA di
+  // seluruh rangkaian baris yang lahir dari rotasi berturut-turut
+  // (login → refresh → refresh → ...), walau tiap rotasi melahirkan
+  // baris `RefreshToken` baru dengan `id` berbeda. Dulu deteksi reuse
+  // (`AuthService.refresh`) mencabut SELURUH sesi user di SEMUA
+  // device begitu SATU token lama dipakai ulang — terlalu agresif:
+  // device lain yang sah ikut ter-logout padahal tidak terlibat sama
+  // sekali. Dengan `familyId`, pencabutan saat reuse terdeteksi cukup
+  // menyasar SATU rangkaian (device) yang tokennya dicuri, persis
+  // seperti yang diminta spec ("seluruh token dalam family tersebut
+  // dicabut"), bukan seluruh akun.
+  //
+  // Baris LAMA (sebelum kolom ini ada) di-backfill dengan `id`
+  // mereka sendiri sebagai `familyId` (lihat migration) — aman karena
+  // baris lama itu memang bukan hasil rotasi apa pun, jadi secara
+  // alami adalah family beranggota satu.
+  familyId  String    @map("family_id")
+  // Finding #20 (P1 Security Hardening) — batas ATLERNATIF absolut
+  // untuk seluruh family, TIDAK PERNAH diperpanjang oleh rotasi
+  // (beda dari `expiresAt` per-baris, yang SENGAJA di-reset penuh
+  // 7 hari setiap kali rotasi terjadi di `AuthService.issueRefreshToken`).
+  //
+  // TANPA kolom ini: `expiresAt` per-baris yang selalu direset ulang
+  // membuat satu family bisa hidup SELAMANYA hanya dengan terus dipakai
+  // sebelum kedaluwarsa (mis. app di HP yang selalu terbuka & auto-
+  // refresh) — tidak pernah memaksa re-autentikasi ulang walau device
+  // itu sudah dipegang berbulan-bulan/bertahun-tahun. Nilai ini diisi
+  // SEKALI saat family lahir (login baru) dan diteruskan APA ADANYA ke
+  // setiap baris rotasi berikutnya dalam family yang sama — lihat
+  // `AuthService.issueRefreshToken` & `AuthService.refresh`.
+  familySessionExpiresAt DateTime @map("family_session_expires_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  // Composite [userId, revokedAt] (Phase 8) — melayani PERSIS query
+  // `AuthRepository.findActiveSessionsForUser` (Phase 7):
+  // `WHERE userId = ? AND revokedAt IS NULL`. Index tunggal
+  // `[userId]` di atas masih tetap ADA (bukan digantikan) karena
+  // beberapa query lain (mis. `revokeAllRefreshTokensForUser`) hanya
+  // memfilter `userId` saja.
+  @@index([userId, revokedAt])
+  // Melayani `AuthRepository.revokeRefreshTokenFamily` (Phase 9) —
+  // "cabut seluruh baris dengan family ini yang belum di-revoke".
+  @@index([familyId])
+  @@map("refresh_tokens")
+}
+
+// Phase 12 (Enterprise Security) — kode pemulihan MFA. Satu baris =
+// SATU kode sekali-pakai. Model TERPISAH (bukan array di kolom User)
+// SENGAJA supaya status "sudah dipakai" (`usedAt`) bisa dilacak per
+// kode individual — user perlu tahu persis kode mana yang masih
+// tersisa, dan sistem perlu menolak kode yang sudah pernah dipakai
+// meski secara tampilan mirip one-time password biasa.
+model MfaRecoveryCode {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  // Di-HASH dengan bcrypt (BUKAN dienkripsi seperti `User.mfaSecret`)
+  // — pola yang sama dengan `User.password`: kode pemulihan hanya
+  // pernah perlu DIBANDINGKAN saat dipakai, tidak pernah perlu dibaca
+  // ulang apa adanya (beda dari secret TOTP yang harus dihitung
+  // ulang). Satu-arah lebih aman kalau memang cukup, jadi dipilih
+  // dibanding enkripsi dua-arah yang tidak perlu di sini.
+  codeHash  String    @map("code_hash")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("mfa_recovery_codes")
+}
+
+// Phase 12 (Enterprise Security) — API Key untuk akses machine-to-
+// machine (CI/CD, integrasi server-to-server) TANPA alur login
+// interaktif (password/OAuth/MFA) yang tidak masuk akal untuk skrip
+// otomatis. SATU baris = satu key.
+model ApiKey {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  // Tenant TEMPAT key ini beroperasi — nullable dengan alasan yang
+  // SAMA PERSIS seperti `User.tenantId`/`Product.tenantId` (Phase
+  // 11): backward compatible selama mode transisi tenant opsional.
+  tenantId  String?   @map("tenant_id")
+  name      String
+  // 8 karakter PERTAMA dari key mentah, disimpan POLOS (bukan
+  // rahasia — analog "4 digit terakhir kartu kredit") supaya user
+  // bisa mengenali key mana yang mana di UI ("list API keys") tanpa
+  // pernah perlu melihat key lengkapnya lagi setelah dibuat.
+  keyPrefix String    @map("key_prefix")
+  // SHA-256 dari key LENGKAP — BUKAN bcrypt. Beda dari
+  // `User.password`/`MfaRecoveryCode.codeHash`: API key sudah
+  // bertentropi tinggi (dibuat lewat `crypto.randomBytes`, bukan
+  // dipilih manusia), jadi tidak butuh cost-factor lambat ala bcrypt
+  // untuk tahan brute-force offline (praktik umum yang sama dipakai
+  // GitHub Personal Access Token, Stripe API key, dst) — DAN SHA-256
+  // deterministik memungkinkan lookup langsung `WHERE key_hash = ?`
+  // (index unik), yang tidak mungkin dilakukan dengan bcrypt (setiap
+  // baris akan butuh `bcrypt.compare` terpisah, O(n) di jumlah key
+  // aktif alih-alih O(1) lewat index).
+  keyHash   String    @unique @map("key_hash")
+  // Scope permission (subset dari `PermissionName`, lihat
+  // `shared/security/permissions.ts`) yang diizinkan dipakai lewat
+  // key ini — divalidasi TIDAK BOLEH melebihi permission role
+  // pemiliknya sendiri saat key dibuat (lihat `ApiKeyService.create`).
+  scopes    String[]
+  lastUsedAt DateTime? @map("last_used_at")
+  expiresAt  DateTime? @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([tenantId])
+  @@map("api_keys")
+}
+
+// Phase 15 (Enterprise Integration) — Webhook Engine. Satu baris = satu
+// URL tujuan terdaftar user, dikirimi event yang cocok dengan
+// `eventTypes`. BEDA dari `ApiKey`/provider Phase 15 lain — ini bukan
+// "ganti vendor eksternal", tapi FITUR aplikasi ini sendiri: mengirim
+// notifikasi KELUAR ke sistem pihak ketiga milik user (kebalikan arah
+// dari webhook Alertmanager di Phase 13, yang MASUK ke aplikasi ini).
+model WebhookEndpoint {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  tenantId   String?   @map("tenant_id")
+  url        String
+  // Secret HMAC PER endpoint (bukan satu secret global) — dibuat
+  // otomatis saat endpoint didaftarkan (`WebhookService.register`),
+  // dipakai penerima webhook untuk memverifikasi payload benar-benar
+  // dari aplikasi ini & tidak diubah di tengah jalan (lihat
+  // `webhook-signer.ts`). Per-endpoint supaya kompromi satu secret
+  // (mis. bocor di log sistem penerima) tidak membahayakan endpoint
+  // user lain.
+  secret     String
+  // Daftar event yang membuat endpoint ini dikirimi payload (mis.
+  // `["product.created", "event.created"]`) — endpoint HANYA
+  // menerima event yang ada di daftar ini, bukan broadcast semua
+  // event ke semua endpoint.
+  eventTypes String[]  @map("event_types")
+  active     Boolean   @default(true)
+  createdAt  DateTime  @default(now()) @map("created_at")
+  revokedAt  DateTime? @map("revoked_at")
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([tenantId])
+  @@map("webhook_endpoints")
+}
+
+// Tier/kategori produk — "upgrade" (#4) berarti menaikkan produk dari
+// satu kategori ke kategori yang lebih tinggi urutannya (STANDARD →
+// FEATURED → PREMIUM), biasanya untuk visibilitas lebih baik di listing.
+enum ProductCategory {
+  STANDARD
+  FEATURED
+  PREMIUM
+}
+
+// Status siklus hidup produk — dipakai sebagai salah satu syarat sah
+// tidaknya sebuah produk di-upgrade (produk INACTIVE/SOLD tidak boleh
+// di-upgrade).
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+  SOLD
+}
+
+model Product {
+  id          String          @id @default(uuid())
+  title       String
+  description String
+  price       Int
+  category    ProductCategory @default(STANDARD)
+  status      ProductStatus   @default(ACTIVE)
+  stock       Int             @default(1)
+  userId      String          @map("user_id")
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+  // Soft delete (Phase 3 upgrade) — pola identik dengan `Event.deletedAt`.
+  deletedAt   DateTime?       @map("deleted_at")
+  // Phase 11 — sama pola & alasannya seperti `User.tenantId`: nullable
+  // selama masa transisi, dibackfill lewat data migration.
+  tenantId    String?         @map("tenant_id")
+
+  // Relasi ke User — setiap produk mencatat siapa pembuatnya.
+  // onDelete: Cascade agar produk ikut terhapus jika user pemiliknya
+  // dihapus (sesuaikan kebijakan ini dengan aturan bisnis riil Anda).
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  upgradeLogs ProductUpgradeLog[]
+
+  @@index([userId])
+  @@index([tenantId])
+  @@index([category])
+  // Composite [status, category] (Phase 8) — mendukung pola query
+  // paling umum di listing produk: "produk ACTIVE, difilter kategori
+  // tertentu" (lihat `ProductRepository.findMany`, query optimization
+  // Phase 8). Urutan kolom SENGAJA status dulu baru category — status
+  // ACTIVE jauh lebih sering dipakai sebagai filter WAJIB (produk
+  // INACTIVE/SOLD jarang ditampilkan di listing publik) dibanding
+  // category yang OPSIONAL, dan aturan leftmost-prefix B-tree berarti
+  // index ini tetap berguna untuk query yang HANYA filter by status
+  // saja (tanpa category).
+  @@index([status, category])
+  // Phase 11 — melayani pola query tenant-scoped listing: "produk
+  // ACTIVE milik tenant X", analog dengan alasan `[status, category]`
+  // di atas (tenantId dulu karena WAJIB difilter begitu tenant
+  // context aktif, status baru kemudian sebagai filter umum).
+  @@index([tenantId, status])
+  @@map("products")
+}
+
+// Audit trail untuk setiap upgrade kategori yang BERHASIL dilakukan —
+// model terpisah (bukan sekadar overwrite kolom `category`) supaya
+// riwayat siapa-mengupgrade-apa-kapan tidak pernah hilang, dan bisa
+// diaudit/ditampilkan kembali ke pemilik produk.
+model ProductUpgradeLog {
+  id            String          @id @default(uuid())
+  productId     String          @map("product_id")
+  fromCategory  ProductCategory @map("from_category")
+  toCategory    ProductCategory @map("to_category")
+  performedById String          @map("performed_by_id")
+  createdAt     DateTime        @default(now()) @map("created_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@map("product_upgrade_logs")
+}
+
+model Event {
+  id          String    @id @default(uuid())
+  title       String
+  description String?
+  category    String
+  location    String
+  date        DateTime
+  ownerId     String    @map("owner_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  // Soft delete (Phase 8) — `DELETE /events/:id` sekarang mengisi
+  // kolom ini alih-alih menghapus baris secara fisik. Alasan: event
+  // yang sudah lewat/dibatalkan tetap perlu dirujuk oleh data lain
+  // yang sudah ada (AuditLog Phase 5 menyimpan `entityId`-nya,
+  // kemungkinan besar juga tiket/pemesanan di kemudian hari) — hard
+  // delete akan membuat rujukan itu menunjuk ke ID yang tidak bisa
+  // dijelaskan lagi ("event apa ini?"). Baris dengan `deletedAt` TIDAK
+  // NULL dikecualikan dari SELURUH query baca normal (lihat
+  // `EventRepository.excludeSoftDeleted`), efeknya IDENTIK dengan
+  // hard delete dari sudut pandang API publik.
+  deletedAt   DateTime? @map("deleted_at")
+  // Phase 11 — sama pola & alasannya seperti `User.tenantId`.
+  tenantId    String?   @map("tenant_id")
+
+  // Relasi ke User (pembuat/organizer event). Cascade dipilih agar
+  // konsisten dengan konvensi `Product` di atas — evaluasi ulang jika
+  // kebijakan bisnis Anda mengharuskan event tetap ada untuk keperluan
+  // audit meski organizer-nya dihapus (ganti ke onDelete: Restrict).
+  owner  User    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  // Indeks pada kolom yang dipakai untuk filtering/search di Events
+  // CRUD (#3): kategori, lokasi, tanggal.
+  // Catatan: index B-tree biasa TIDAK mempercepat pencarian substring
+  // (`contains`/ILIKE '%x%') pada `title`. Jika volume data besar dan
+  // search-by-title jadi fitur utama, pertimbangkan ekstensi
+  // `pg_trgm` + GIN index sebagai optimasi lanjutan.
+  @@index([ownerId])
+  @@index([tenantId])
+  @@index([category])
+  @@index([location])
+  @@index([date])
+  // Composite [category, date] (Phase 8) — melayani pola query
+  // paling umum: browsing event per kategori, diurutkan tanggal.
+  // Index tunggal [category] & [date] di atas TETAP dipertahankan
+  // (bukan digantikan) — keduanya masih relevan untuk query yang
+  // hanya memfilter salah satunya saja (mis. rentang tanggal tanpa
+  // filter kategori, yang tidak bisa memanfaatkan leftmost-prefix
+  // index komposit ini karena `category` ada di posisi pertama).
+  @@index([category, date])
+  // Phase 11 — analog dengan `Product [tenantId, status]`: melayani
+  // listing event tenant-scoped diurutkan tanggal.
+  @@index([tenantId, date])
+  @@map("events")
+}
+
+// Jenis aksi yang dicatat AuditLog — daftar TERTUTUP (enum, bukan
+// string bebas) sesuai permintaan: Create, Update, Delete, Login,
+// Logout. Tambah member baru di sini kalau ada jenis aksi audit lain
+// yang perlu dilacak di masa depan (mis. `ROLE_CHANGE`).
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  // Percobaan login yang GAGAL tapi kredensialnya mengacu ke akun
+  // yang benar-benar ada (password salah, atau email belum
+  // diverifikasi) — SENGAJA tidak dicatat untuk email yang sama
+  // sekali tidak terdaftar (tidak ada userId untuk dikaitkan, dan
+  // tidak ada "riwayat login" pengguna mana pun yang perlu tahu).
+  LOGIN_FAILED
+  // Phase 17 (Session Management Enterprise) — dua aksi TERPISAH
+  // (bukan digabung ke satu "SESSION_CHANGED") supaya riwayat bisa
+  // membedakan "user mencabut SATU device tertentu" dari "user
+  // logout dari SEMUA device sekaligus" tanpa perlu membaca payload
+  // tambahan — bedanya cukup terlihat dari nilai enum action itu
+  // sendiri, konsisten dengan pola LOGIN vs LOGIN_FAILED di atas.
+  SESSION_REVOKED
+  SESSIONS_REVOKED_ALL
+  // Phase 17 lanjutan (Suspicious Session Detection) — login BERHASIL
+  // (kredensial benar, termasuk lolos MFA kalau aktif) tapi datang
+  // dari kombinasi IP address + User-Agent yang belum pernah tercatat
+  // sebelumnya untuk user ini, PADAHAL user tsb sudah pernah login
+  // dari device lain sebelumnya (bukan login pertama kali). TERPISAH
+  // dari `LOGIN` (bukan menggantikannya) — baris `LOGIN` tetap dicatat
+  // seperti biasa di riwayat, ini adalah SINYAL TAMBAHAN yang dicatat
+  // bersamaan, konsisten dengan pola `SESSION_REVOKED` di atas yang
+  // juga tidak menggantikan aksi lain yang terjadi bersamaan.
+  SUSPICIOUS_LOGIN_DETECTED
+}
+
+// Audit trail untuk aksi yang mengubah state penting (CRUD) atau
+// aksi keamanan (login/logout) — SIAPA melakukan APA terhadap
+// ENTITY mana, kapan, dan dari mana (IP/user agent).
+//
+// `userId` SENGAJA bukan foreign key relasi ke `User` (beda dari
+// kebanyakan model lain di schema ini yang selalu punya `@relation`)
+// — audit log HARUS tetap ada bahkan setelah user pemiliknya dihapus
+// (mis. kebutuhan compliance/forensik), jadi tidak boleh ikut
+// ter-cascade-delete. Konsekuensinya: tidak ada jaminan referential
+// integrity di level database untuk kolom ini — trade-off yang
+// disengaja untuk audit log, TIDAK direkomendasikan untuk model lain.
+//
+// `entityId` nullable — aksi LOGIN/LOGOUT tidak menyasar satu baris
+// entity bisnis tertentu (entity-nya "User" itu sendiri, entity ID-nya
+// sama dengan userId, atau bisa dikosongkan).
+model AuditLog {
+  id        String      @id @default(uuid())
+  userId    String?     @map("user_id")
+  action    AuditAction
+  entity    String
+  entityId  String?     @map("entity_id")
+  ipAddress String?     @map("ip_address")
+  userAgent String?     @map("user_agent")
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  // Index komposit `[entity, entityId]` — query paling umum untuk
+  // audit log adalah "tampilkan seluruh riwayat perubahan pada
+  // Event/Product tertentu", bukan mencari lintas seluruh entity.
+  @@index([userId])
+  @@index([entity, entityId])
+  @@index([createdAt])
+  // Composite [userId, createdAt] (Phase 11 upgrade — Database
+  // Optimization): melayani PERSIS query `AuditRepository.findByUser`
+  // — `WHERE userId = ? AND action IN (...) ORDER BY createdAt DESC`
+  // (sumber data `GET /auth/login-history` DAN endpoint admin
+  // `GET /auth/admin/users/:id/login-history`, Phase 9 upgrade).
+  // Index tunggal `[userId]` di atas TIDAK bisa memenuhi `ORDER BY`
+  // tanpa langkah sort tambahan begitu jumlah baris per user besar;
+  // composite ini membuat Postgres bisa membaca baris LANGSUNG sudah
+  // terurut `createdAt DESC` dari index-nya sendiri. Index tunggal
+  // `[userId]` TETAP dipertahankan (bukan digantikan) — query lain
+  // yang hanya memfilter `userId` tanpa peduli urutan masih relevan
+  // memakainya.
+  @@index([userId, createdAt])
+  @@map("audit_logs")
+}
+
+// Kategori ActivityLog — beda tujuan dari AuditLog: AuditLog fokus ke
+// aksi CRUD/keamanan yang butuh jejak forensik presisi (siapa-apa-
+// kapan), ActivityLog lebih longgar — narasi aktivitas umum yang
+// berguna untuk analytics/timeline aktivitas user (mis. ditampilkan
+// di halaman "riwayat aktivitas saya").
+enum ActivityType {
+  USER_ACTIVITY
+  FILE_UPLOAD
+  AUTH_ACTIVITY
+}
+
+// `metadata` bertipe Json — SENGAJA fleksibel/tidak diskemakan ketat
+// seperti kolom lain, karena bentuk detail aktivitas bisa sangat
+// beragam antar `type` (mis. ukuran & mimetype untuk FILE_UPLOAD,
+// device info untuk AUTH_ACTIVITY) dan akan terus bertambah jenisnya
+// seiring waktu tanpa perlu migrasi skema setiap kali.
+model ActivityLog {
+  id          String       @id @default(uuid())
+  userId      String?      @map("user_id")
+  type        ActivityType
+  description String
+  metadata    Json?
+  ipAddress   String?      @map("ip_address")
+  userAgent   String?      @map("user_agent")
+  createdAt   DateTime     @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
+
+// Phase 4 (Testing Professional — Upload flow): mencatat SETIAP file
+// yang berhasil diupload ke S3, supaya "Upload → Access → Delete"
+// punya sesuatu untuk dicek kepemilikannya. Tanpa tabel ini,
+// `UploadService` tidak punya cara sama sekali untuk tahu file mana
+// milik siapa — sebelumnya file langsung ke S3 tanpa jejak apa pun di
+// database.
+model FileUpload {
+  id           String   @id @default(uuid())
+  // Key S3 — unik per definisi (dibuat dari UUID acak di
+  // `UploadService.uploadFile`), dipakai lagi saat delete
+  // (`DeleteObjectCommand`) supaya tidak perlu menyimpan/mengurai key
+  // dari `url`.
+  key          String   @unique
+  url          String
+  originalName String   @map("original_name")
+  mimetype     String
+  sizeBytes    Int      @map("size_bytes")
+  userId       String   @map("user_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("file_uploads")
+}
+
+// Feature Flag (Phase 16 upgrade — Enterprise Feature). Tabel
+// SEDERHANA sengaja — satu baris = satu flag global on/off, TIDAK ada
+// targeting per-user/per-percentage-rollout. Kebutuhan itu belum ada
+// di aplikasi ini; menambah kompleksitas targeting sebelum benar-benar
+// dibutuhkan hanya menambah permukaan bug. Kalau nanti dibutuhkan
+// (mis. rollout bertahap ke 10% user), ini titik awal yang mudah
+// diperluas — bukan perlu dirombak dari nol.
+model FeatureFlag {
+  id          String   @id @default(uuid())
+  // `key` (bukan `name`) — konsisten dengan konvensi penamaan flag di
+  // ekosistem feature-flag pada umumnya (mis. "new-checkout-flow"),
+  // dibaca di kode lewat `FeatureFlagService.isEnabled(key)`.
+  key         String   @unique
+  enabled     Boolean  @default(false)
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("feature_flags")
+}
+
+// Phase 15 (Enterprise Integration) — penyimpanan generik untuk
+// `PostgresSearchProvider` (`shared/integrations/search/`), default
+// SearchProvider yang tidak butuh infrastruktur tambahan apa pun
+// (beda dari `MeilisearchSearchProvider`, yang butuh service
+// Meilisearch berjalan terpisah). SENGAJA generik lintas "index"
+// (`indexName`, mis. "products", "events") dalam SATU tabel, bukan
+// satu tabel per index — jumlah index yang dipakai aplikasi ini
+// diperkirakan kecil, dan satu tabel generik jauh lebih sederhana
+// untuk dikelola/dimigrasikan dibanding membuat tabel baru setiap
+// kali ada index baru.
+model SearchDocument {
+  id          String   @id @default(uuid())
+  indexName   String   @map("index_name")
+  // ID dokumen ASLI di sistem sumbernya (mis. `Product.id`) — TERPISAH
+  // dari `id` primary key tabel ini sendiri, supaya satu dokumen bisa
+  // di-upsert ulang (index yang sama + documentId yang sama = baris
+  // yang sama, lihat `@@unique` di bawah) tanpa perlu tahu `id`
+  // internal baris ini.
+  documentId  String   @map("document_id")
+  // Representasi teks polos dari seluruh field yang dicari (mis.
+  // gabungan title+description) — DENORMALISASI SENGAJA, dipisah dari
+  // `content` (JSON asli dokumennya) supaya query `contains` di bawah
+  // tidak perlu mem-parse JSON per baris.
+  searchText  String   @map("search_text")
+  // Dokumen ASLI (bentuk lengkap yang dikembalikan `search()`) —
+  // disimpan APA ADANYA sebagai JSON, bukan direkonstruksi dari kolom
+  // lain, supaya `PostgresSearchProvider` tidak perlu tahu skema
+  // spesifik tiap index.
+  content     Json
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([indexName, documentId])
+  @@index([indexName])
+  @@map("search_documents")
+}
+
+// Phase 19 (Enterprise Platform) — Export Service. Baris ini dibuat
+// SAAT request export masuk (`status: QUEUED`) dan diupdate oleh
+// worker (`export.worker.ts`) begitu job BullMQ-nya diproses — SATU
+// baris per permintaan export, jadi client bisa polling
+// `GET /exports/:id` untuk tahu progres tanpa perlu tahu apa pun
+// soal BullMQ (job id BullMQ internal, TIDAK dipakai sebagai id
+// publik — lihat alasan yang sama di desain lain aplikasi ini yang
+// memisahkan id publik dari detail infrastruktur).
+//
+// `userId` SENGAJA bukan foreign key relasi ke `User` — pola yang
+// SAMA PERSIS dengan `AuditLog.userId` (lihat komentar lengkap di
+// model itu): riwayat export adalah jejak forensik/pelaporan yang
+// harus tetap ada meski user penciptanya sudah dihapus, TIDAK boleh
+// ikut ter-cascade-delete. Ini keputusan desain yang SENGAJA
+// (dikonfirmasi di komentar migration `20260806000000_export_jobs`),
+// BUKAN celah yang terlewat — audit database (P3) berikutnya tidak
+// perlu menandai ini lagi sebagai "FK hilang".
+model ExportJob {
+  id           String         @id @default(uuid())
+  userId       String         @map("user_id")
+  tenantId     String?        @map("tenant_id")
+  type         ExportType
+  format       ExportFormat
+  status       ExportJobStatus @default(QUEUED)
+  // Diisi worker setelah upload ke Object Storage berhasil (lihat
+  // `ObjectStorageProvider` — Phase 15) — URL inilah yang dikembalikan
+  // `GET /exports/:id/download`, BUKAN file di-generate ulang setiap
+  // kali di-download.
+  fileUrl      String?        @map("file_url")
+  errorMessage String?        @map("error_message")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  completedAt  DateTime?      @map("completed_at")
+
+  @@index([userId])
+  // Finding P3 (Database Audit) — SEBELUMNYA tidak ada index sama
+  // sekali di kolom ini, tidak konsisten dengan konvensi proyek: setiap
+  // model lain dengan `tenantId` opsional (Product, Event, ApiKey,
+  // WebhookEndpoint) SUDAH punya `@@index([tenantId])` sejak Phase 11,
+  // sebagai kebijakan konsisten mendahului kebutuhan query spesifik
+  // (lihat docs/tenant-migration-strategy.md). Ditambahkan di sini
+  // murni untuk konsistensi arsitektur/kesiapan query tenant-scoped di
+  // masa depan (mis. "daftar seluruh export milik tenant X") — belum
+  // ada query yang memakainya HARI INI (belum ada endpoint semacam
+  // itu), jadi ini tidak memperbaiki bug performa yang sudah terjadi,
+  // murni pencegahan drift konvensi.
+  @@index([tenantId])
+  @@map("export_jobs")
+}
+
+enum ExportType {
+  USERS
+  AUDIT_LOG
+  DASHBOARD_STATS
+  // Phase 20 (Reporting & Analytics Service) — export per-domain yang
+  // sebelumnya hanya bisa didapat lewat `DASHBOARD_STATS` (satu blob
+  // gabungan). Dipecah supaya konsumen yang hanya butuh statistik
+  // event, misalnya, tidak perlu memfilter sendiri dari file export
+  // gabungan yang jauh lebih besar. Sumber data SAMA PERSIS dengan
+  // `ReportingService`/`AnalyticsService` (lihat `export.service.ts`
+  // `buildDataset`) — TIDAK ada query kedua yang bisa menyimpang.
+  USER_STATISTICS
+  EVENT_STATISTICS
+  PRODUCT_STATISTICS
+  SYSTEM_STATISTICS
+  DAILY_ACTIVE_USERS
+}
+
+enum ExportFormat {
+  CSV
+  XLSX
+  PDF
+}
+
+enum ExportJobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+}

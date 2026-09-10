@@ -1,0 +1,5 @@
+# Jangan hapus file ini!
+# Digunakan Prisma Migrate untuk mendeteksi provider database yang dipakai.
+# Selalu commit file ini ke version control.
+
+provider = "postgresql"

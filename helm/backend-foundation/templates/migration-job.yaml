@@ -1,0 +1,74 @@
+{{- if .Values.migration.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # Nama menyertakan `.Release.Revision` — WAJIB, Kubernetes MENOLAK
+  # membuat Job baru dengan nama yang sama persis dengan Job lama
+  # yang belum dihapus; tanpa ini, `helm upgrade` KEDUA akan gagal
+  # karena Job dari `helm upgrade` PERTAMA masih ada (`hook-delete-policy`
+  # di bawah menghapusnya SETELAH sukses, tapi nama unik tetap jaring
+  # pengaman kalau delete-nya sendiri gagal/lambat).
+  name: {{ .Release.Name }}-migrate-{{ .Release.Revision }}
+  labels:
+    {{- include "backend-foundation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+  annotations:
+    # Auto Migration (Phase 20) — INILAH yang membuat migration
+    # OTOMATIS jalan sebelum Deployment API/worker versi baru
+    # digulirkan, TANPA langkah manual seperti di `k8s/README.md`.
+    # `pre-install,pre-upgrade` — jalan SEBELUM Helm mulai mengubah
+    # resource lain sama sekali (termasuk `helm install` PERTAMA
+    # kali, bukan cuma saat upgrade). `hook-weight: "-5"` memastikan
+    # ini jalan LEBIH DULU dari hook lain kalau suatu saat ada
+    # tambahan (angka lebih kecil = duluan).
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: '-5'
+    # `hook-succeeded` — Job DIHAPUS otomatis setelah sukses (supaya
+    # tidak menumpuk tiap `helm upgrade`), TAPI TIDAK dihapus kalau
+    # GAGAL (`before-hook-creation` saja, bukan `hook-failed`) —
+    # SENGAJA, supaya operator bisa `kubectl logs job/...` untuk
+    # mendiagnosis migration yang gagal SEBELUM Job-nya lenyap.
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migration.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: backend-foundation
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: migrate
+          image: '{{ .Values.image.repository }}:{{ .Values.image.migrationTag }}'
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ['npx', 'prisma', 'migrate', 'deploy']
+          # SENGAJA TIDAK `envFrom: configMapRef/secretRef` (beda dari
+          # deployment.yaml/worker-deployment.yaml) — `helm.sh/hook:
+          # pre-install` berjalan SEBELUM resource biasa (termasuk
+          # ConfigMap/Secret chart ini) dibuat Helm sama sekali
+          # (dokumentasi resmi Helm: hook lifecycle terpisah dari
+          # urutan render manifest biasa). Kalau tetap pakai
+          # `envFrom` ke ConfigMap/Secret yang BELUM ADA, `helm
+          # install` PERTAMA KALI akan gagal (`helm upgrade`
+          # berikutnya kebetulan tetap jalan karena ConfigMap/Secret
+          # rilis SEBELUMNYA masih ada — bug yang menyamar sukses).
+          # Fix: env var yang migration BENAR-BENAR butuh (cuma
+          # `DATABASE_URL`) di-inline LANGSUNG dari `.Values` di sini,
+          # tidak bergantung ke resource Kubernetes lain sama sekali.
+          env:
+            - name: DATABASE_URL
+              value: {{ required "values.secrets.DATABASE_URL wajib diisi (lihat values.yaml)" .Values.secrets.DATABASE_URL | quote }}
+          resources:
+            requests: { cpu: 250m, memory: 256Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ['ALL']
+{{- end }}

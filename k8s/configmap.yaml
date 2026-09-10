@@ -1,0 +1,75 @@
+# Phase 20 (Enterprise DevOps) — ConfigMap untuk env var yang AMAN
+# dibaca siapa pun dengan akses `kubectl get configmap` (non-secret).
+# Kredensial/connection string ADA DI `secret.yaml`, BUKAN di sini —
+# pemisahan ini persis mengikuti env.ts (`shared/config/env.ts`):
+# semua var yang nilainya berupa endpoint/kredensial masuk Secret,
+# sisanya (mode, angka konfigurasi, nama provider) masuk sini.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-foundation-config
+  labels:
+    app.kubernetes.io/name: backend-foundation
+    app.kubernetes.io/part-of: backend-foundation
+data:
+  NODE_ENV: "production"
+  PORT: "3000"
+  LOG_LEVEL: "info"
+  JWT_EXPIRES_IN: "15m"
+  BCRYPT_SALT_ROUNDS: "10"
+  # Ganti sesuai domain frontend sungguhan — comma-separated (lihat
+  # parsing-nya di `env.ts`).
+  CORS_ALLOWED_ORIGINS: "https://app.example.com"
+
+  # Provider yang aktif — pilihan implementasi, BUKAN kredensial
+  # (kredensial provider yang dipilih tetap di Secret).
+  EMAIL_PROVIDER: "resend"
+  SMS_PROVIDER: "twilio"
+  PUSH_PROVIDER: "fcm"
+  PAYMENT_PROVIDER: "stripe"
+  SEARCH_PROVIDER: "meilisearch"
+  OBJECT_STORAGE_PROVIDER: "s3"
+
+  # Concurrency/rate-limit queue (Phase 13/19) — angka tuning, aman
+  # sebagai ConfigMap, gampang diubah tanpa redeploy Secret.
+  EMAIL_QUEUE_CONCURRENCY: "5"
+  NOTIFICATION_QUEUE_CONCURRENCY: "5"
+  EXPORT_QUEUE_CONCURRENCY: "2"
+  EMAIL_QUEUE_RATE_LIMIT_MAX: "10"
+  EMAIL_QUEUE_RATE_LIMIT_DURATION_MS: "60000"
+
+  # Database connection pool (lihat rationale lengkap di `env.ts`) —
+  # SENGAJA "0" (pakai default Prisma) sebagai baseline, WAJIB
+  # disetel manual kalau replica count > 1 (lihat komentar `env.ts`:
+  # instances × connection_limit TIDAK BOLEH melebihi max_connections
+  # PostgreSQL).
+  DATABASE_CONNECTION_LIMIT: "0"
+  DATABASE_POOL_TIMEOUT_SECONDS: "0"
+
+  # Phase 18 — Graceful Shutdown. HARUS lebih kecil dari
+  # `terminationGracePeriodSeconds` di `deployment.yaml` (lihat
+  # komentar di sana) — kalau tidak, Kubernetes akan SIGKILL sebelum
+  # proses sempat shutdown bersih sendiri.
+  SHUTDOWN_TIMEOUT_MS: "10000"
+
+  # Object storage (S3-compatible) — region bukan kredensial.
+  AWS_REGION: "ap-southeast-1"
+
+  RESEND_FROM_EMAIL: "noreply@example.com"
+  TWILIO_FROM_NUMBER: "+10000000000"
+
+  MEILISEARCH_HOST: "http://meilisearch:7700"
+
+  # Phase 16 — OpenTelemetry. Default MATI (konsisten dengan default
+  # `env.ts`) — nyalakan eksplisit lewat Helm values kalau OTel
+  # Collector sudah tersedia di cluster.
+  OTEL_ENABLED: "false"
+  OTEL_SERVICE_NAME: "backend-foundation"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc.cluster.local:4318/v1/traces"
+
+  # OAuth client ID — BUKAN client secret (yang secret tetap di
+  # Secret), client ID publik by design di protokol OAuth.
+  GITHUB_CLIENT_ID: ""
+  GOOGLE_CLIENT_ID: ""
+
+  QUEUE_DASHBOARD_USER: "admin"

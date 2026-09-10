@@ -1,0 +1,45 @@
+# Phase 20 — Canary Deployment. TIDAK AKTIF secara default (lihat
+# `canary-weight: "0"` di bawah) — dokumentasi lengkap alur pemakaian
+# ada di `k8s/README.md`. Ringkasnya: Ingress KEDUA (bukan mengedit
+# `ingress.yaml`) yang menunjuk ke `service-canary.yaml` (selector
+# `track: canary`, lihat `deployment-canary.yaml`) — ingress-nginx
+# otomatis mengarahkan PERSENTASE traffic sesuai `canary-weight` ke
+# sini, SISANYA tetap ke Ingress utama (`ingress.yaml`, track
+# stable), TANPA perlu service mesh (Istio/Linkerd) atau controller
+# tambahan apa pun di luar ingress-nginx yang sudah dipakai untuk
+# `ingress.yaml`.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: backend-foundation-api-canary
+  labels:
+    app.kubernetes.io/name: backend-foundation
+    app.kubernetes.io/component: api
+    track: canary
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: 'true'
+    nginx.ingress.kubernetes.io/canary: 'true'
+    # Naikkan bertahap SAAT canary sedang divalidasi: 0 -> 5 -> 25 ->
+    # 50 -> 100 (di titik 100, promosikan `deployment-canary.yaml`
+    # jadi `deployment.yaml` yang baru — track `canary` "naik
+    # pangkat" jadi `stable` — lalu hapus Ingress+Service canary ini,
+    # SELESAI). Turunkan ke 0 atau hapus file ini KAPAN SAJA kalau
+    # canary menunjukkan gejala tidak sehat.
+    nginx.ingress.kubernetes.io/canary-weight: '0'
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.example.com
+      secretName: backend-foundation-tls
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-foundation-api-canary
+                port:
+                  name: http

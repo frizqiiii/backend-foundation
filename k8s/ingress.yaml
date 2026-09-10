@@ -1,0 +1,37 @@
+# Phase 20 — Ingress utama (traffic stable, 100%). Asumsi
+# ingress-nginx sebagai Ingress Controller (paling umum dipakai,
+# native mendukung anotasi canary tanpa perlu service mesh tambahan
+# — lihat `ingress-canary.yaml` untuk pola Canary Deployment).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: backend-foundation-api
+  labels:
+    app.kubernetes.io/name: backend-foundation
+    app.kubernetes.io/component: api
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: 'true'
+    # Rate limiting di level Ingress SEBAGAI LAPISAN TAMBAHAN di
+    # depan `generalRateLimiter`/`tenantRateLimiter` aplikasi (Phase
+    # 18) — proteksi paling depan sebelum request bahkan sempat
+    # sampai ke Pod, berguna kalau volume serangan cukup besar untuk
+    # membebani Pod itu sendiri kalau baru difilter di level aplikasi.
+    nginx.ingress.kubernetes.io/limit-rps: '50'
+    cert-manager.io/cluster-issuer: letsencrypt-prod # opsional — hapus kalau TLS dikelola di luar cluster (mis. Cloudflare).
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.example.com
+      secretName: backend-foundation-tls
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: backend-foundation-api
+                port:
+                  name: http

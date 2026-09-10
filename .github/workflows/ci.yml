@@ -1,0 +1,134 @@
+name: CI
+
+# Sesuai dokumentasi di docs/security-guide.md & docs/runbook.md:
+# lint+format, typecheck+build, test (unit/coverage + e2e + contract
+# dengan service container Postgres+Redis), npm audit, Docker build +
+# Trivy scan, GitHub Dependency Review.
+#
+# Kredensial DATABASE_URL di bawah SENGAJA disamakan persis dengan
+# yang di-hardcode jest.setup.ts (test:test@localhost:5432/test_db)
+# supaya npm run test:contract tidak gagal connect diam-diam.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  lint-and-format:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: ESLint (max-warnings 0)
+        run: npm run lint:ci
+      - name: Prettier check
+        run: npm run format:check
+
+  typecheck-and-build:
+    name: Typecheck & Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: TypeScript typecheck
+        run: npx tsc --noEmit
+      - name: Build
+        run: npm run build
+
+  test:
+    name: Test (unit + coverage + e2e + contract)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test_db
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://test:test@localhost:5432/test_db
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - name: Unit + integration + e2e tests with coverage
+        run: npm run test:coverage
+      - name: Contract tests (Pact)
+        run: npm run test:contract
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14
+
+  dependency-audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: npm audit (informational — lihat scripts/check-npm-audit.js untuk alasan gate sebenarnya bukan ini)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+      - name: Advisory allowlist triage (gate sebenarnya)
+        run: npm run audit:check
+      - name: GitHub Dependency Review
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@v4
+
+  docker-build-and-scan:
+    name: Docker Build + Trivy Scan
+    runs-on: ubuntu-latest
+    needs: [lint-and-format, typecheck-and-build, test]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t backend-foundation:${{ github.sha }} .
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: backend-foundation:${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: '1'

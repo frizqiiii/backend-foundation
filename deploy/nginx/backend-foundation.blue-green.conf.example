@@ -1,0 +1,51 @@
+# PERSIAPAN Blue/Green Deployment (Phase 14 upgrade) — file CONTOH,
+# BUKAN dipasang otomatis. Nama file diakhiri `.example` dengan
+# sengaja: mengaktifkan blue/green sungguhan butuh KEPUTUSAN
+# operasional (2x kapasitas server saat masa transisi, prosedur
+# smoke-test manual di environment idle sebelum switch trafik) yang
+# tidak seharusnya otomatis dipasang tanpa keputusan sadar operator.
+#
+# ================================================================
+# KENAPA INI DISEBUT "PERSIAPAN", BUKAN "IMPLEMENTASI PENUH":
+# ================================================================
+# Blue/Green sungguhan butuh:
+#   1. Dua environment app BERJALAN BERSAMAAN di port berbeda (blue di
+#      3000, green di 3001) — di sinilah `deploy/pm2/ecosystem.config.js`
+#      perlu di-duplikasi jadi 2 app PM2 dengan nama & port berbeda
+#      (BELUM dibuat di sini — env kedua idle butuh kapasitas server
+#      2x lipat selama masa transisi, keputusan biaya yang harus
+#      operator putuskan sendiri, bukan dipaksakan lewat file ini).
+#   2. Nginx upstream yang bisa di-switch TANPA downtime — INI yang
+#      disediakan file contoh ini.
+#   3. Prosedur switch manual (lihat di bawah).
+#
+# ================================================================
+# PROSEDUR SWITCH (setelah environment idle sudah di-deploy & lolos
+# smoke test manual, mis. curl langsung ke port 3001):
+# ================================================================
+#   1. Edit baris `server 127.0.0.1:3001 backup;` di bawah — hapus
+#      kata `backup` supaya green ikut aktif, DAN ubah
+#      `server 127.0.0.1:3000;` menjadi `... backup;` (kebalikannya)
+#      untuk membuat blue jadi cadangan.
+#   2. sudo nginx -t   # WAJIB sebelum reload
+#   3. sudo systemctl reload nginx   # switch trafik, ZERO downtime
+#   4. Setelah green terbukti stabil di trafik nyata, blue (sekarang
+#      idle) bisa di-deploy versi berikutnya, siap jadi target switch
+#      selanjutnya — bergantian, bukan searah.
+
+upstream backend_blue_green {
+  # PENTING: keyword `backup` membuat server itu HANYA menerima
+  # trafik kalau server non-backup di atasnya SEDANG DOWN — ini BUKAN
+  # load balancing 50/50. Untuk blue/green, memang hanya SATU warna
+  # yang melayani trafik nyata di satu waktu; yang lain idle/standby,
+  # bukan berbagi beban.
+  server 127.0.0.1:3000; # "blue" — aktif secara default
+  server 127.0.0.1:3001 backup; # "green" — standby, siap di-switch
+}
+
+# Di server block utama (`backend-foundation.conf`), ganti:
+#   proxy_pass http://127.0.0.1:3000;
+# menjadi:
+#   proxy_pass http://backend_blue_green;
+# di KEDUA location (`/health` dan `/`) supaya keduanya ikut
+# tunduk pada upstream yang sama.

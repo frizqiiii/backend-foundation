@@ -1,0 +1,66 @@
+# Konfigurasi Prometheus — scrape target untuk backend_app (`/metrics`,
+# lihat Phase 1: `src/modules/monitoring/metrics`), plus dua exporter
+# infrastruktur (Redis & PostgreSQL) yang didaftarkan di
+# `docker-compose.monitoring.yml`. Tanpa dua exporter ini, panel
+# "Redis status" & "Database status" di dashboard Grafana tidak akan
+# punya data sungguhan untuk ditampilkan — bukan sekadar hiasan, tapi
+# prasyarat langsung untuk requirement Phase 4.
+
+global:
+  # Seberapa sering Prometheus menarik (scrape) metric dari tiap
+  # target — 15 detik adalah nilai standar Prometheus sendiri, cukup
+  # rapat untuk dashboard real-time tanpa membebani target secara
+  # berlebihan.
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Phase 13 (Enterprise Observability) — ke mana Prometheus mengirim
+# alert yang statusnya FIRING (dievaluasi dari `rule_files` di bawah).
+# Prometheus sendiri HANYA mengevaluasi alert rule & mengirim
+# notifikasi ke Alertmanager — Alertmanager-lah yang mengurus
+# routing/grouping/silencing/dedup ke channel notifikasi sungguhan
+# (lihat `monitoring/alertmanager/alertmanager.yml`).
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+# File terpisah (bukan didefinisikan inline di sini) supaya alert rule
+# bisa berkembang tanpa membuat file konfigurasi utama Prometheus ini
+# jadi terlalu panjang — konvensi umum Prometheus.
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  # Prometheus me-monitor dirinya sendiri — praktik umum agar
+  # kesehatan Prometheus itu sendiri (mis. berapa banyak target yang
+  # gagal di-scrape) juga bisa dipantau lewat dashboard yang sama.
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Target utama — nama service `backend_app` diselesaikan lewat DNS
+  # internal Docker (`backend-network`, sama seperti di
+  # docker-compose.yml), BUKAN `localhost`. `/metrics` sudah didaftarkan
+  # tanpa versioning API di `app.ts` (lihat Phase 1).
+  - job_name: 'backend_app'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['backend_app:3000']
+        labels:
+          service: 'backend-foundation'
+
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis_exporter:9121']
+
+  - job_name: 'postgresql'
+    static_configs:
+      - targets: ['postgres_exporter:9187']
+
+  # Node exporter (Phase 20) — lihat komentar lengkap di service
+  # `node_exporter` pada `docker-compose.monitoring.yml` untuk kenapa
+  # ini ditambahkan dan catatan penting soal Kubernetes/DaemonSet.
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node_exporter:9100']

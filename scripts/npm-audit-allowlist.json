@@ -1,0 +1,19 @@
+[
+  {
+    "id": "GHSA-q7rr-3cgh-j5r3",
+    "package": "@opentelemetry/sdk-node",
+    "title": "Prometheus exporter process crash via malformed HTTP request",
+    "reason": "Kerentanan ini HANYA berlaku untuk built-in HTTP server bawaan @opentelemetry/exporter-prometheus (default port 9464). Aplikasi ini tidak pernah mengimpor/menjalankan paket itu, tidak set OTEL_METRICS_EXPORTER=prometheus, dan tracing.ts hanya mengonfigurasi traceExporter (OTLPTraceExporter) -- tanpa metricReader apa pun. Endpoint /metrics aplikasi ini dilayani sepenuhnya oleh prom-client secara langsung (lihat metrics.registry.ts), independen dari OpenTelemetry SDK. Fix upstream (sdk-node >=0.221.0) mengharuskan semver-major bump yang, lewat @prisma/instrumentation, mensyaratkan Prisma di-upgrade ke versi 7.x -- migrasi besar yang tidak sepadan untuk menutup celah di code path yang memang tidak pernah aktif di aplikasi ini.",
+    "reviewBy": "2027-02-01",
+    "addedAt": "2026-08-07"
+  },
+  {
+    "id": "GHSA-45rx-2jwx-cxfr",
+    "package": "@opentelemetry/propagator-jaeger",
+    "title": "Denial of service via malformed uber-trace-id header in JaegerPropagator",
+    "reason": "@opentelemetry/propagator-jaeger hanya terpasang sebagai dependency transitive bawaan @opentelemetry/sdk-node (opsi propagator yang TERSEDIA, bukan yang AKTIF). Sudah dicek langsung ke kode: tidak ada 'propagator' ataupun 'OTEL_PROPAGATORS' di seluruh src/ maupun docs/ -- tracing.ts tidak pernah mengisi textMapPropagator, jadi NodeSDK memakai default bawaan (W3C tracecontext + baggage), BUKAN JaegerPropagator. Kelas yang rentan (metode extract() yang mem-parsing header uber-trace-id) tidak pernah diinstansiasi ataupun dipanggil di aplikasi ini. Fix ini terikat pada bump semver-major yang sama seperti GHSA-q7rr-3cgh-j5r3 di atas (lihat alasan lengkap di entri itu).",
+    "reviewBy": "2027-02-01",
+    "addedAt": "2026-08-07"
+  }
+]
+

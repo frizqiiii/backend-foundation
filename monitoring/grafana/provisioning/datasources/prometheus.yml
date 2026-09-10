@@ -1,0 +1,17 @@
+# Auto-provisioning datasource Grafana — Prometheus terdaftar OTOMATIS
+# saat container Grafana start, tanpa perlu klik manual "Add data
+# source" lewat UI setiap kali stack di-recreate. File ini di-mount ke
+# `/etc/grafana/provisioning/datasources/` (lihat
+# `docker-compose.monitoring.yml`).
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    # Nama service `prometheus`, diselesaikan lewat DNS internal Docker
+    # di `backend-network` — sama seperti pola `backend_app`/`redis` di
+    # compose file utama.
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true

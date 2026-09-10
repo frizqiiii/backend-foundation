@@ -1,0 +1,101 @@
+# Phase 20 — pasangan `ingress-canary.yaml`. Selector `track: canary`
+# — HANYA memilih Pod dari `deployment-canary.yaml`, terpisah total
+# dari `service.yaml` (yang memilih `track: stable`).
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-foundation-api-canary
+  labels:
+    app.kubernetes.io/name: backend-foundation
+    app.kubernetes.io/component: api
+    track: canary
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: backend-foundation
+    app.kubernetes.io/component: api
+    track: canary
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# Deployment canary — SALINAN `deployment.yaml` dengan 2 perbedaan
+# SENGAJA: (1) `track: canary` (bukan `stable`), (2) `replicas: 1`
+# (canary tidak perlu replica sebanyak stable — cukup satu Pod untuk
+# menyerap persentase kecil traffic sesuai `canary-weight`). Image
+# tag BIASANYA beda dari `deployment.yaml` (versi baru yang sedang
+# diuji) — diisi eksplisit lewat Helm values saat memakai chart
+# (`helm/backend-foundation`), TIDAK diwariskan otomatis dari
+# `deployment.yaml`.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-foundation-api-canary
+  labels:
+    app.kubernetes.io/name: backend-foundation
+    app.kubernetes.io/component: api
+    track: canary
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend-foundation
+      app.kubernetes.io/component: api
+      track: canary
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: backend-foundation
+        app.kubernetes.io/component: api
+        track: canary
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: api
+          image: backend-foundation:canary # WAJIB diisi tag versi yang sedang diuji — jangan `latest`, supaya jelas beda dari stable.
+          imagePullPolicy: IfNotPresent
+          command: ['node', 'dist/server.js']
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: backend-foundation-config
+            - secretRef:
+                name: backend-foundation-secret
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ['ALL']
+      terminationGracePeriodSeconds: 15

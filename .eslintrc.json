@@ -1,0 +1,115 @@
+{
+  "root": true,
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "ecmaVersion": 2021,
+    "sourceType": "module",
+    "project": "./tsconfig.json"
+  },
+  "plugins": ["@typescript-eslint", "prettier"],
+  "extends": [
+    "eslint:recommended",
+    "plugin:@typescript-eslint/recommended",
+    "plugin:prettier/recommended"
+  ],
+  "env": {
+    "node": true,
+    "es2021": true,
+    "jest": true
+  },
+  "rules": {
+    // Prettier menjadi satu-satunya sumber kebenaran untuk formatting;
+    // pelanggaran format ditandai sebagai ESLint error, bukan warning,
+    // supaya tidak ada kode "hampir rapi" yang lolos.
+    "prettier/prettier": "error",
+
+    // Variabel/parameter tak terpakai adalah error, bukan warning —
+    // mencegah dead code menumpuk. Parameter yang sengaja diabaikan
+    // boleh diberi prefix underscore, misal `_req`.
+    "@typescript-eslint/no-unused-vars": [
+      "error",
+      { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }
+    ],
+
+    // Melarang penggunaan `any` implisit/eksplisit tanpa alasan jelas —
+    // memaksa developer berpikir soal tipe yang benar, sesuai prinsip
+    // "strict" di tsconfig.json proyek ini.
+    "@typescript-eslint/no-explicit-any": "error",
+
+    // Setiap async function di layer Controller/Service HARUS di-await
+    // atau ditangani; mencegah unhandled promise rejection yang lolos
+    // ke production tanpa tertangkap error handler.
+    "@typescript-eslint/no-floating-promises": "error",
+
+    // Konsisten memakai `type` untuk import tipe murni — memperjelas
+    // mana import yang hanya dibutuhkan compiler, bukan runtime.
+    "@typescript-eslint/consistent-type-imports": "error",
+
+    // Larang penggunaan console.log di luar console.warn/console.error
+    // (logging terstruktur sebaiknya lewat logger, bukan console.log
+    // yang tercecer di production).
+    "no-console": ["warn", { "allow": ["warn", "error"] }],
+
+    // Wajib eksplisit menangani kasus non-null assertion (`!`) hanya
+    // saat benar-benar diperlukan.
+    "@typescript-eslint/no-non-null-assertion": "warn"
+  },
+  "overrides": [
+    {
+      // File test boleh sedikit lebih longgar: mocking sering butuh
+      // `any`/non-null assertion demi keterbacaan test, dan console.log
+      // untuk debugging sementara wajar di sini.
+      //
+      // `no-var-requires`/`consistent-type-imports` juga dimatikan di
+      // sini: banyak test butuh me-reload modul segar di tengah test
+      // (setelah `jest.resetModules()`/di dalam `jest.isolateModulesAsync`)
+      // lewat `require()` dinamis, dan mengetik hasilnya lewat
+      // `typeof import('./modul')` — pola ini tidak punya padanan yang
+      // lebih rapi dengan `import` statement biasa (yang di-hoist dan
+      // tidak bisa dipanggil ulang secara kondisional di tengah test).
+      // Kedua rule ini TETAP aktif penuh di luar file test.
+      "files": ["**/*.spec.ts", "**/*.test.ts"],
+      "rules": {
+        "@typescript-eslint/no-explicit-any": "off",
+        "@typescript-eslint/no-non-null-assertion": "off",
+        "@typescript-eslint/no-var-requires": "off",
+        "@typescript-eslint/consistent-type-imports": "off"
+      }
+    },
+    {
+      // Entry point boleh console.log untuk banner startup — ini
+      // bukan logging aplikasi, hanya sekali jalan saat boot.
+      "files": ["src/server.ts"],
+      "rules": {
+        "no-console": "off"
+      }
+    },
+    {
+      // Script CLI plain Node.js di `scripts/` (bukan bagian dari
+      // `src/`, tidak dikompilasi lewat `tsconfig.json`) — dilint
+      // pakai parser default ESLint (bukan `@typescript-eslint/parser`
+      // yang di file ini butuh `parserOptions.project`), supaya rule
+      // typed-linting yang butuh compiler service tidak ikut jalan di
+      // file yang memang bukan bagian dari TypeScript program.
+      // `console.log` di sini memang output CLI yang dituju untuk
+      // dibaca manusia langsung di terminal/CI, bukan logging aplikasi
+      // yang seharusnya lewat `logger.ts`.
+      "files": ["scripts/**/*.js"],
+      "parser": "espree",
+      "extends": ["eslint:recommended", "plugin:prettier/recommended"],
+      "env": {
+        "node": true,
+        "es2021": true
+      },
+      "rules": {
+        "no-console": "off",
+        "@typescript-eslint/no-unused-vars": "off",
+        "@typescript-eslint/no-explicit-any": "off",
+        "@typescript-eslint/no-floating-promises": "off",
+        "@typescript-eslint/consistent-type-imports": "off",
+        "@typescript-eslint/no-non-null-assertion": "off",
+        "@typescript-eslint/no-var-requires": "off"
+      }
+    }
+  ]
+}

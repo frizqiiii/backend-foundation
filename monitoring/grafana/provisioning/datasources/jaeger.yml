@@ -1,0 +1,13 @@
+# Auto-provisioning datasource Grafana untuk Jaeger (Phase 13) — sama
+# mekanismenya seperti `prometheus.yml` di folder yang sama, dipisah
+# jadi file sendiri (konvensi Grafana: satu file provisioning per
+# datasource) supaya masing-masing bisa dikelola/dihapus independen.
+apiVersion: 1
+
+datasources:
+  - name: Jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    isDefault: false
+    editable: true

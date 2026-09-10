@@ -1,0 +1,23 @@
+# Phase 20 — Service untuk Deployment API. `selector` HANYA mencakup
+# `track: stable` (BUKAN sekadar `component: api`) — inilah mekanisme
+# blue-green: mengedit satu baris selector di file ini (`stable` ->
+# `green`) memindahkan SELURUH traffic secara atomik ke Deployment
+# lain yang labelnya `track: green`, tanpa perlu menunggu rolling
+# update Pod demi Pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-foundation-api
+  labels:
+    app.kubernetes.io/name: backend-foundation
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: backend-foundation
+    app.kubernetes.io/component: api
+    track: stable
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

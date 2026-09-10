@@ -1,0 +1,167 @@
+{
+  "title": "Backend Foundation — SLO / Service Health",
+  "uid": "backend-foundation-slo",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "timezone": "utc",
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "tags": ["backend-foundation", "slo"],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Availability SLI (1h window)",
+      "type": "gauge",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 99,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 99.5 },
+              { "color": "green", "value": 99.9 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "100 * (1 - slo:http_requests:error_ratio_rate1h)",
+          "legendFormat": "availability",
+          "refId": "A"
+        }
+      ],
+      "description": "SLO target: 99.9% (lihat docs/slo.md). Dihitung dari recording rule slo:http_requests:error_ratio_rate1h (monitoring/prometheus/alerts.yml)."
+    },
+    {
+      "id": 2,
+      "title": "Error Budget Remaining (24h window)",
+      "type": "gauge",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 25 },
+              { "color": "green", "value": 50 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "clamp_min(100 * (1 - (sum(rate(http_errors_total[24h])) / sum(rate(http_requests_total[24h])) / 0.001)), 0)",
+          "legendFormat": "budget remaining",
+          "refId": "A"
+        }
+      ],
+      "description": "Window 24h (BUKAN periode SLO penuh 30 hari) — dibatasi retensi Prometheus lokal (15d, lihat docker-compose.monitoring.yml). Untuk error budget akurat sepanjang periode SLO penuh, arahkan ke long-term storage (remote-write) — lihat docs/slo.md §Keterbatasan."
+    },
+    {
+      "id": 3,
+      "title": "p95 Latency vs SLO Target (300ms)",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": { "drawStyle": "line", "fillOpacity": 10 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.3 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "A"
+        },
+        {
+          "expr": "0.3",
+          "legendFormat": "SLO target (300ms)",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Error Budget Burn Rate (multiples of budget/hour)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": { "drawStyle": "line", "fillOpacity": 10 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 6 },
+              { "color": "red", "value": 14.4 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "slo:http_requests:error_ratio_rate5m / 0.001",
+          "legendFormat": "burn rate (5m)",
+          "refId": "A"
+        },
+        {
+          "expr": "slo:http_requests:error_ratio_rate1h / 0.001",
+          "legendFormat": "burn rate (1h)",
+          "refId": "B"
+        }
+      ],
+      "description": "1x = mengonsumsi budget persis secepat yang dialokasikan untuk periode 30 hari. Ambang alert: 6x (slow burn) dan 14.4x (fast burn) — lihat monitoring/prometheus/alerts.yml dan docs/slo.md."
+    },
+    {
+      "id": 5,
+      "title": "Error Ratio — Multi-Window Comparison",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": { "drawStyle": "line", "fillOpacity": 5 }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "slo:http_requests:error_ratio_rate5m", "legendFormat": "5m", "refId": "A" },
+        { "expr": "slo:http_requests:error_ratio_rate30m", "legendFormat": "30m", "refId": "B" },
+        { "expr": "slo:http_requests:error_ratio_rate1h", "legendFormat": "1h", "refId": "C" },
+        { "expr": "slo:http_requests:error_ratio_rate6h", "legendFormat": "6h", "refId": "D" }
+      ],
+      "description": "Perbandingan langsung ke garis error budget (0.001 = 0.1%) membantu membedakan lonjakan sesaat dari degradasi berkelanjutan."
+    }
+  ]
+}

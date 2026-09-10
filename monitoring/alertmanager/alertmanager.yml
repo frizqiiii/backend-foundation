@@ -1,0 +1,65 @@
+# Phase 13 (Enterprise Observability) — Alertmanager config.
+#
+# SENGAJA memakai `webhook_configs` sebagai contact point default,
+# BUKAN Slack/PagerDuty/email yang di-hardcode langsung di sini —
+# kredensial/webhook URL untuk channel notifikasi sungguhan berbeda
+# per environment (dan per tim) dan TIDAK BOLEH ikut ter-commit ke
+# repo.
+#
+# PENTING — Alertmanager TIDAK melakukan expansion environment
+# variable (`${VAR}`) di file YAML config-nya sendiri (beda dari
+# `docker-compose.yml`) — `url` di bawah adalah PLACEHOLDER yang WAJIB
+# diganti manual sebelum dipakai di lingkungan sungguhan (via file ini
+# langsung, atau lewat `envsubst`/config-management sebelum mount kalau
+# butuh berbeda per environment). Ganti ke Slack/PagerDuty/email
+# receiver sesuai kebutuhan tim — dokumentasi lengkap:
+# https://prometheus.io/docs/alerting/latest/configuration/#receiver
+
+global:
+  resolve_timeout: 5m
+
+# Alert dikelompokkan per (alertname, severity) — SATU notifikasi untuk
+# beberapa alert yang firing bersamaan dengan kombinasi label yang
+# sama, bukan satu notifikasi terpisah per alert. Mengurangi noise saat
+# insiden besar memicu banyak alert sekaligus.
+route:
+  group_by: ['alertname', 'severity']
+  group_wait: 30s
+  group_interval: 5m
+  # Alert yang SAMA tidak dikirim ulang lebih sering dari ini selama
+  # masih firing — cukup jarang untuk tidak membanjiri channel, cukup
+  # sering untuk insiden yang berlarut-larut tetap "diingatkan".
+  repeat_interval: 4h
+  receiver: default-webhook
+  routes:
+    # Alert `severity: critical` dipisah ke receiver sendiri — di
+    # environment sungguhan, arahkan receiver ini ke channel/on-call
+    # yang lebih agresif (mis. PagerDuty) dibanding `warning`.
+    - matchers:
+        - severity="critical"
+      receiver: critical-webhook
+      repeat_interval: 1h
+
+receivers:
+  # PLACEHOLDER — ganti sebelum dipakai di luar development lokal.
+  - name: default-webhook
+    webhook_configs:
+      - url: 'http://backend_app:3000/api/v1/internal/alertmanager-webhook'
+        send_resolved: true
+
+  # PLACEHOLDER — ganti ke channel on-call sungguhan di production.
+  - name: critical-webhook
+    webhook_configs:
+      - url: 'http://backend_app:3000/api/v1/internal/alertmanager-webhook'
+        send_resolved: true
+
+# Inhibit — kalau `ServiceDown` sudah firing, TAHAN alert lain yang
+# lebih spesifik dari service yang sama (mis. `LatencyP95AboveSLO`
+# tidak ada gunanya dikirim terpisah kalau service-nya memang sedang
+# down total — sudah jelas penyebabnya, bukan sinyal baru).
+inhibit_rules:
+  - source_matchers:
+      - alertname="ServiceDown"
+    target_matchers:
+      - team="backend"
+    equal: ['team']

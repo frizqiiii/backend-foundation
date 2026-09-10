@@ -1,0 +1,22 @@
+backend-foundation ({{ .Chart.AppVersion }}) ter-deploy sebagai release "{{ .Release.Name }}" di namespace "{{ .Release.Namespace }}".
+
+{{- if .Values.migration.enabled }}
+Migration database sudah dijalankan otomatis (pre-install/pre-upgrade hook).
+Cek hasilnya: kubectl logs job/{{ .Release.Name }}-migrate-{{ .Release.Revision }} -n {{ .Release.Namespace }}
+{{- else }}
+PERHATIAN: migration.enabled=false — migration database TIDAK dijalankan otomatis. Jalankan manual sebelum lalu lintas produksi diarahkan ke release ini.
+{{- end }}
+
+Cek status rollout:
+  kubectl rollout status deployment/{{ .Release.Name }}-api -n {{ .Release.Namespace }}
+  kubectl rollout status deployment/{{ .Release.Name }}-worker -n {{ .Release.Namespace }}
+
+{{- if .Values.ingress.enabled }}
+Aplikasi dapat diakses di: https://{{ .Values.ingress.host }}
+{{- else }}
+Ingress dimatikan (ingress.enabled=false) — akses lewat port-forward:
+  kubectl port-forward svc/{{ .Release.Name }}-api 3000:80 -n {{ .Release.Namespace }}
+{{- end }}
+
+Rollback (lihat k8s/README.md untuk detail lengkap):
+  helm rollback {{ .Release.Name }} -n {{ .Release.Namespace }}
