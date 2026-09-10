@@ -17,7 +17,7 @@ COPY package.json package-lock.json ./
 # python3/make/g++ dibutuhkan node-gyp untuk kompilasi native addon (bcrypt).
 # Dihapus lagi setelah instalasi agar layer ini tetap seminimal mungkin.
 RUN apk add --no-cache --virtual .build-deps python3 make g++ \
-  && npm ci \
+  && npm ci --omit=dev \
   && apk del .build-deps
 
 # ============================================================================
@@ -39,9 +39,8 @@ RUN npm run build
 FROM base AS prod-deps
 COPY package.json package-lock.json ./
 RUN apk add --no-cache --virtual .build-deps python3 make g++ \
-  && npm ci --omit=dev \
+  && HUSKY=0 npm ci --omit=dev \
   && apk del .build-deps
-
 # ============================================================================
 # STAGE 4: runner — image final yang benar-benar dijalankan di production.
 # Hanya membawa: node_modules production, hasil compile (dist), Prisma Client
