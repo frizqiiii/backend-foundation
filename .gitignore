@@ -23,8 +23,9 @@ coverage/
 .stryker-tmp/
 reports/mutation/
 
-# Contract testing (Pact) output
-pacts/
+# Contract testing (Pact) — pact-logs/ adalah runtime log (ignore),
+# tapi pacts/*.json ditulis manual dan HARUS di-commit (lihat
+# auth.provider.contract.spec.ts)
 pact-logs/
 
 # Logs

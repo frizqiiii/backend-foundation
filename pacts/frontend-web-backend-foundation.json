@@ -1,0 +1,73 @@
+{
+  "consumer": { "name": "frontend-web" },
+  "provider": { "name": "backend-foundation" },
+  "interactions": [
+    {
+      "description": "login dengan kredensial valid",
+      "providerState": "seorang user dengan email login-contract@example.com sudah terdaftar, terverifikasi, dan password-nya Password123",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/login",
+        "headers": { "Content-Type": "application/json" },
+        "body": {
+          "email": "login-contract@example.com",
+          "password": "Password123"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json; charset=utf-8" },
+        "body": {
+          "success": true,
+          "message": "Like",
+          "data": {
+            "accessToken": "like-token-string",
+            "refreshToken": "like-token-string",
+            "user": {
+              "id": "like-uuid-string",
+              "email": "login-contract@example.com",
+              "name": "like-string"
+            }
+          }
+        },
+        "matchingRules": {
+          "$.body.message": { "match": "type" },
+          "$.body.data.accessToken": { "match": "type" },
+          "$.body.data.refreshToken": { "match": "type" },
+          "$.body.data.user.id": {
+            "match": "regex",
+            "regex": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "$.body.data.user.name": { "match": "type" }
+        }
+      }
+    },
+    {
+      "description": "login dengan password salah",
+      "providerState": "seorang user dengan email login-contract@example.com sudah terdaftar dan terverifikasi",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/auth/login",
+        "headers": { "Content-Type": "application/json" },
+        "body": {
+          "email": "login-contract@example.com",
+          "password": "PasswordSalahTotal"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": { "Content-Type": "application/json; charset=utf-8" },
+        "body": {
+          "success": false,
+          "message": "like-string"
+        },
+        "matchingRules": {
+          "$.body.message": { "match": "type" }
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "pactSpecification": { "version": "2.0.0" }
+  }
+}
