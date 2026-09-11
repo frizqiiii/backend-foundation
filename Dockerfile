@@ -60,10 +60,6 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 RUN apk add --no-cache openssl libc6-compat
 
-FROM node:20-alpine AS runner
-WORKDIR /app
-RUN apk add --no-cache openssl libc6-compat
-
 # Image ini HANYA menjalankan `node dist/server.js`, tidak pernah
 # memanggil npm/yarn/corepack — hapus bawaan base image node:20-alpine
 # supaya tidak ikut masuk hasil scan Trivy sebagai attack surface (dan
@@ -74,8 +70,6 @@ RUN rm -rf /usr/local/lib/node_modules/npm \
     /usr/local/lib/node_modules/corepack \
     /opt/yarn-v1.22.22 \
     /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/yarn
-
-ENV NODE_ENV=production
 
 ENV NODE_ENV=production
 
