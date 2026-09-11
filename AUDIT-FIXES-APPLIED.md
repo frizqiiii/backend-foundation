@@ -105,3 +105,40 @@ Setelah beberapa putaran perbaikan (`.eslintrc.json`, `jest.config.ts`,
 
 **TODO berikutnya:** upgrade `multer` ke v2, dan tambahkan langkah hapus
 npm CLI di stage `runner` — baru itu Trivy bisa dikembalikan ke `exit-code: '1'`.
+
+## 7. Sesi lanjutan (Claude, repo state 2026-09-11) — Kelompok 1 gap-analysis
+
+- **`Dockerfile`** — diperbaiki: ada duplikasi `FROM node:20-alpine AS runner`
+  + `ENV NODE_ENV=production` (sisa edit manual sebelumnya). Tidak merusak
+  build (stage kedua menang, hasil akhir tetap benar), tapi boros waktu
+  build dan membingungkan dibaca. Dihapus duplikatnya.
+- **11 file `*.repository.spec.ts` baru** — sebelumnya 11 dari 13 repository
+  (semua kecuali `dashboard`/`analytics`) TIDAK punya test sama sekali (0%
+  coverage, bukan cuma rendah). Ditulis untuk: `api-key`, `audit`, `auth`,
+  `event`, `export`, `feature-flag`, `mfa`, `product`, `tenant`, `user`,
+  `webhook`. **Status: IMPLEMENTED, belum VERIFIED** — tervalidasi bersih
+  lewat `tsc --noEmit` (tidak ada error baru di luar kategori
+  `prisma generate` blocked yang sudah dikenal), TAPI sandbox tidak bisa
+  menjalankan `prisma generate` (403 dari `binaries.prisma.sh`) sehingga
+  suite-suite ini belum pernah benar-benar dieksekusi. **WAJIB** jalankan
+  `npx jest --coverage` di environment kamu (yang sudah punya Prisma Client
+  ter-generate) untuk konfirmasi angka branches/functions sekarang
+  memenuhi threshold 84%/86% di `jest.config.ts`.
+- **`.github/workflows/ci.yml` — Trivy scan dikembalikan ke gate**
+  (`exit-code: '1'`, sebelumnya `'0'`/informational). Precondition yang
+  disebut di catatan TODO di atas (multer v2 + penghapusan npm/corepack
+  dari image `runner`) sudah terpenuhi di commit sebelumnya. **Status:
+  IMPLEMENTED, belum VERIFIED** — belum ada run Trivy nyata untuk
+  memastikan tidak ada temuan CRITICAL/HIGH lain yang tersisa (mis. dari
+  OS package Alpine). Pantau run CI pertama setelah push ini; kalau gagal
+  karena temuan lain (bukan multer/npm), evaluasi temuannya dulu sebelum
+  memutuskan revert ke informational atau menambah exception.
+- **Masih di luar kemampuan sandbox ini (WAJIB verifikasi nyata di environment kamu):**
+  - k6 load test (`npm run perf:*`) — belum pernah dijalankan dengan angka nyata
+  - Graceful shutdown SIGTERM — implementasi di `server.ts` sudah diaudit,
+    urutannya benar (health 503 → stop terima koneksi baru → tunggu
+    request selesai/timeout → tutup DB/Redis), TIDAK ada bug ditemukan,
+    tapi verifikasi end-to-end (kirim SIGTERM ke proses nyata, konfirmasi
+    request in-flight benar-benar selesai) butuh proses + DB nyata
+  - `deploy.yml` di VPS sungguhan
+  - Mutation testing (Stryker) — skor 62.95% belum diperbaiki sesi ini
