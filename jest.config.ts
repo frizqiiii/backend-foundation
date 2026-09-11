@@ -21,6 +21,7 @@ const config: Config = {
   collectCoverageFrom: [
     'src/**/*.ts',
     '!src/server.ts',
+    '!src/worker.ts',
     '!src/**/*.d.ts',
     '!src/**/*.routes.ts',
     '!src/shared/config/**',
