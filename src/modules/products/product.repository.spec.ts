@@ -155,10 +155,7 @@ describe('ProductRepository', () => {
   it('applyUpgrade meng-update category DAN mencatat productUpgradeLog dalam satu $transaction', async () => {
     const prisma = createMockPrisma();
     const updatedProduct = { id: 'p1', category: 'PREMIUM' };
-    (prisma.$transaction as jest.Mock).mockResolvedValue([
-      updatedProduct,
-      { id: 'log1' },
-    ]);
+    (prisma.$transaction as jest.Mock).mockResolvedValue([updatedProduct, { id: 'log1' }]);
     const repository = new ProductRepository(prisma);
 
     const result = await repository.applyUpgrade({

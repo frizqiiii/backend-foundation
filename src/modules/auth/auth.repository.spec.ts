@@ -74,7 +74,9 @@ describe('AuthRepository', () => {
 
       await repository.findRefreshTokenByHash('hash1');
 
-      expect(prisma.refreshToken.findUnique).toHaveBeenCalledWith({ where: { tokenHash: 'hash1' } });
+      expect(prisma.refreshToken.findUnique).toHaveBeenCalledWith({
+        where: { tokenHash: 'hash1' },
+      });
     });
 
     it('findRefreshTokenById mencari via id unique', async () => {
@@ -203,11 +205,12 @@ describe('AuthRepository', () => {
 
         await repository.revokeAllRefreshTokensForUser('u1', tx);
 
-        expect((tx as { refreshToken: { updateMany: jest.Mock } }).refreshToken.updateMany)
-          .toHaveBeenCalledWith({
-            where: { userId: 'u1', revokedAt: null },
-            data: { revokedAt: expect.any(Date) },
-          });
+        expect(
+          (tx as { refreshToken: { updateMany: jest.Mock } }).refreshToken.updateMany
+        ).toHaveBeenCalledWith({
+          where: { userId: 'u1', revokedAt: null },
+          data: { revokedAt: expect.any(Date) },
+        });
         expect(prisma.refreshToken.updateMany).not.toHaveBeenCalled();
       });
     });
@@ -235,11 +238,12 @@ describe('AuthRepository', () => {
 
         await repository.revokeRefreshTokenFamily('f1', tx);
 
-        expect((tx as { refreshToken: { updateMany: jest.Mock } }).refreshToken.updateMany)
-          .toHaveBeenCalledWith({
-            where: { familyId: 'f1', revokedAt: null },
-            data: { revokedAt: expect.any(Date) },
-          });
+        expect(
+          (tx as { refreshToken: { updateMany: jest.Mock } }).refreshToken.updateMany
+        ).toHaveBeenCalledWith({
+          where: { familyId: 'f1', revokedAt: null },
+          data: { revokedAt: expect.any(Date) },
+        });
         expect(prisma.refreshToken.updateMany).not.toHaveBeenCalled();
       });
     });
@@ -359,7 +363,9 @@ describe('AuthRepository', () => {
 
       await repository.deleteAllPasswordResetTokensForUser('u1');
 
-      expect(prisma.passwordResetToken.deleteMany).toHaveBeenCalledWith({ where: { userId: 'u1' } });
+      expect(prisma.passwordResetToken.deleteMany).toHaveBeenCalledWith({
+        where: { userId: 'u1' },
+      });
     });
   });
 
