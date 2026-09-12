@@ -4,7 +4,7 @@
   "testRunner": "jest",
   "reporters": ["html", "clear-text", "progress"],
   "coverageAnalysis": "perTest",
-  "ignoreStatic": true,
+  "ignoreStatic": false,
 
   "mutate": [
     "src/shared/reliability/**/*.ts",
