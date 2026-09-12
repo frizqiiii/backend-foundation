@@ -97,6 +97,15 @@ describe('createRateLimiter', () => {
               increment: jest.fn().mockResolvedValue({ totalHits: 1, resetTime: undefined }),
               decrement: jest.fn(),
               resetKey: jest.fn(),
+              // Bentuk asli `RedisStore` (lihat rate-limiter.ts): constructor
+              // sungguhan meng-eager-load 2 Lua script lewat property
+              // public ini (masing-masing sebuah Promise). Kode kita
+              // memasang `.catch()` no-op pada keduanya SEGERA setelah
+              // instance dibuat (fix untuk bug upstream rate-limit-redis
+              // #190) — mock ini harus punya bentuk yang sama supaya
+              // `.catch()` itu tidak meledak kena `undefined`.
+              incrementScriptSha: Promise.resolve('mock-sha-increment'),
+              getScriptSha: Promise.resolve('mock-sha-get'),
             };
           }),
       }));
@@ -114,5 +123,43 @@ describe('createRateLimiter', () => {
     await capturedSendCommand!('INCR', 'rate_limit:test-redis-store:1.2.3.4');
 
     expect(redisCall).toHaveBeenCalledWith('INCR', 'rate_limit:test-redis-store:1.2.3.4');
+  });
+
+  it('P5 — Insiden nyata (verifikasi graceful shutdown, Fase 1 item 1.5): kalau RedisStore.increment() gagal (mis. Redis down), request TETAP lolos 200 (fail-open), BUKAN 500 — passOnStoreError:true mencegah SATU dependency opsional yang down menjatuhkan SELURUH endpoint', async () => {
+    let mod: typeof import('./rate-limiter') | undefined;
+
+    await jest.isolateModulesAsync(async () => {
+      jest.doMock('../config/redis', () => ({ redisClient: { call: jest.fn() } }));
+      jest.doMock('rate-limit-redis', () => ({
+        RedisStore: jest.fn().mockImplementation(() => ({
+          init: jest.fn(),
+          increment: jest
+            .fn()
+            .mockRejectedValue(
+              new Error(
+                'MaxRetriesPerRequestError: Reached the max retries per request limit (which is 2).'
+              )
+            ),
+          decrement: jest.fn(),
+          resetKey: jest.fn(),
+          incrementScriptSha: Promise.resolve('mock-sha-increment'),
+          getScriptSha: Promise.resolve('mock-sha-get'),
+        })),
+      }));
+      mod = require('./rate-limiter');
+    });
+
+    const limiter = mod!.createRateLimiter({
+      windowMs: 60_000,
+      max: 5,
+      message: 'x',
+      keyPrefix: 'test-store-error-fail-open',
+    });
+    const app = buildTestApp(limiter);
+
+    const res = await request(app).get('/ping');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true, data: 'pong' });
   });
 });

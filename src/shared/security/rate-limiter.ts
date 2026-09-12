@@ -50,25 +50,62 @@ export function createRateLimiter(options: CreateRateLimiterOptions): ReturnType
     max: options.max,
     standardHeaders: true,
     legacyHeaders: false,
+    // Default `express-rate-limit` adalah `false` — kalau store
+    // (RedisStore) gagal (mis. Redis down), request akan DILEMPARKAN
+    // sebagai error 500 (raw error class bocor ke response, lihat
+    // insiden nyata waktu verifikasi graceful shutdown P0/Fase-1 item
+    // 1.5: SATU dependency opsional yang down berakibat SEMUA endpoint
+    // `/api/v1/*` ikut 500). `true` di sini membuatnya "fail open":
+    // begitu store gagal, request dilewatkan TANPA rate-limit (cuma
+    // di-log sebagai warning oleh express-rate-limit sendiri) —
+    // konsisten dengan filosofi Redis OPSIONAL yang sudah dipegang di
+    // `redis.ts`/`queue/connection.ts` (kehilangan konsistensi
+    // rate-limit lintas-instance lebih baik daripada seluruh API mati).
+    passOnStoreError: true,
     ...(options.keyGenerator ? { keyGenerator: options.keyGenerator } : {}),
     ...(options.skip ? { skip: options.skip } : {}),
     store: redis
-      ? new RedisStore({
-          prefix: `rate_limit:${options.keyPrefix}:`,
-          // `ioredis` menyediakan `.call()` untuk mengirim raw command
-          // Redis apa pun — persis kontrak `sendCommand` yang diminta
-          // `rate-limit-redis` (library ini didesain client-agnostic,
-          // tidak spesifik ke satu library Redis tertentu). Signature
-          // `.call()` milik ioredis tidak menerima array biasa lewat
-          // spread (butuh tuple), jadi argumen diteruskan lewat
-          // `.call(command, ...rest)` yang cocok dengan overload-nya.
-          sendCommand: (...args: string[]) => {
-            const [command, ...rest] = args;
-            return redis.call(command, ...rest) as Promise<
-              string | number | Array<string | number>
-            >;
-          },
-        })
+      ? (() => {
+          const redisStore = new RedisStore({
+            prefix: `rate_limit:${options.keyPrefix}:`,
+            // `ioredis` menyediakan `.call()` untuk mengirim raw command
+            // Redis apa pun — persis kontrak `sendCommand` yang diminta
+            // `rate-limit-redis` (library ini didesain client-agnostic,
+            // tidak spesifik ke satu library Redis tertentu). Signature
+            // `.call()` milik ioredis tidak menerima array biasa lewat
+            // spread (butuh tuple), jadi argumen diteruskan lewat
+            // `.call(command, ...rest)` yang cocok dengan overload-nya.
+            sendCommand: (...args: string[]) => {
+              const [command, ...rest] = args;
+              return redis.call(command, ...rest) as Promise<
+                string | number | Array<string | number>
+              >;
+            },
+          });
+
+          // Bug upstream yang sudah dikonfirmasi (masih terbuka):
+          // https://github.com/express-rate-limit/rate-limit-redis/issues/190
+          // Constructor `RedisStore` memuat 2 Lua script (SCRIPT LOAD)
+          // secara EAGER lewat `this.incrementScriptSha =
+          // this.loadIncrementScript()` — promise-nya TIDAK PERNAH
+          // di-`await`/`.catch()` oleh library-nya sendiri. Kalau Redis
+          // tidak reachable persis saat `RedisStore` ini dibuat (mis.
+          // startup, sebelum request pertama), promise itu berakhir
+          // REJECTED, dan karena tidak ada yang menangkap, itu lolos
+          // jadi `unhandledRejection` di level proses — yang oleh P0
+          // hardening kita (`server.ts`) dianggap FATAL dan mematikan
+          // SELURUH aplikasi, padahal Redis SENGAJA opsional di sini.
+          // Fix: pasang `.catch()` no-op kita sendiri SEGERA (tick yang
+          // sama) setelah instance dibuat. Ini TIDAK menyembunyikan
+          // masalah koneksi Redis — `redisClient.on('error', ...)`
+          // sudah mencatatnya sendiri; ini cuma mencegah gagalnya
+          // pre-load script (konsekuensi LANJUTAN dari error yang sama)
+          // ikut menjatuhkan proses.
+          redisStore.incrementScriptSha.catch(() => undefined);
+          redisStore.getScriptSha.catch(() => undefined);
+
+          return redisStore;
+        })()
       : undefined,
     // Handler kustom melempar `TooManyRequestsError` lewat `next()`,
     // BUKAN membiarkan `express-rate-limit` membentuk response
