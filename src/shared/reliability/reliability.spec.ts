@@ -66,6 +66,57 @@ describe('withRetry', () => {
     expect(fn).toHaveBeenCalledTimes(2);
   });
 
+  it('P5 — delay antar-percobaan mengikuti exponential backoff PERSIS: baseDelayMs * 2^(attempt-1)', async () => {
+    const setTimeoutSpy = jest.spyOn(global, 'setTimeout');
+    const fn = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('gagal 1'))
+      .mockRejectedValueOnce(new Error('gagal 2'))
+      .mockResolvedValue('ok akhirnya');
+
+    await withRetry(fn, { attempts: 3, baseDelayMs: 10 }, 'test');
+
+    // Percobaan 1 gagal -> delay = 10 * 2^0 = 10ms.
+    // Percobaan 2 gagal -> delay = 10 * 2^1 = 20ms.
+    // (bukan linear/tetap 10ms, dan bukan pula 2^attempt seperti 10*2^1=20 lalu 10*2^2=40)
+    const delaysUsed = setTimeoutSpy.mock.calls.map((call) => call[1]);
+    expect(delaysUsed).toEqual(expect.arrayContaining([10, 20]));
+
+    setTimeoutSpy.mockRestore();
+  });
+
+  it('P5 — maxDelayMs MEMBATASI delay eksponensial (tidak boleh terus tumbuh tanpa batas)', async () => {
+    const setTimeoutSpy = jest.spyOn(global, 'setTimeout');
+    const fn = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('gagal 1'))
+      .mockRejectedValueOnce(new Error('gagal 2'))
+      .mockRejectedValueOnce(new Error('gagal 3'))
+      .mockResolvedValue('ok akhirnya');
+
+    // Tanpa maxDelayMs, percobaan ke-3 akan delay 100*2^2=400ms — DENGAN
+    // maxDelayMs:150, harus DIPOTONG jadi 150, bukan 400.
+    await withRetry(fn, { attempts: 4, baseDelayMs: 100, maxDelayMs: 150 }, 'test');
+
+    const delaysUsed = setTimeoutSpy.mock.calls.map((call) => call[1]);
+    expect(delaysUsed).toContain(150);
+    expect(delaysUsed).not.toContain(400);
+
+    setTimeoutSpy.mockRestore();
+  });
+
+  it('P5 — logger.warn dipanggil dengan seluruh field & pesan PERSIS di tiap percobaan yang gagal (bukan cuma "ada log")', async () => {
+    const error1 = new Error('gagal 1');
+    const fn = jest.fn().mockRejectedValueOnce(error1).mockResolvedValue('ok');
+
+    await withRetry(fn, { attempts: 3, baseDelayMs: 5 }, 'proses-uji');
+
+    expect(mockedLogger.warn).toHaveBeenCalledWith(
+      { label: 'proses-uji', attempt: 1, totalAttempts: 3, delayMs: 5, err: error1 },
+      'proses-uji: percobaan 1 gagal, retry dalam 5ms'
+    );
+  });
+
   it('TIDAK retry kalau isRetryable mengembalikan false', async () => {
     const fn = jest.fn().mockRejectedValue(new Error('tidak boleh diulang'));
     await expect(
