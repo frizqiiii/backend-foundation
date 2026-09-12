@@ -28,9 +28,19 @@ const BROWSER_PATTERNS: ReadonlyArray<[RegExp, string]> = [
 
 const OS_PATTERNS: ReadonlyArray<[RegExp, string]> = [
   [/windows/i, 'Windows'],
+  // iOS DIPERIKSA SEBELUM macOS (bukan cuma soal urutan array biasa):
+  // string User-Agent iPhone/iPad ASLI mengandung teks "like Mac OS X"
+  // (konvensi kompatibilitas resmi Apple, sudah ada sejak iOS generasi
+  // awal — BUKAN kasus langka), jadi kalau macOS diperiksa duluan,
+  // SEMUA sesi dari iPhone/iPad salah terdeteksi sebagai "macOS" di
+  // UI "sesi aktif" (`AuthService.listSessions`). Bug produksi nyata
+  // ini ketahuan lewat mutation testing (Fase 1 item 1.2) — sebelumnya
+  // tidak ada test yang memakai string User-Agent iPhone/iPad ASLI
+  // (cuma potongan generik "iphone"/"ipad" tanpa "Mac OS X" di
+  // dalamnya), jadi tabrakan pola ini tidak pernah ketahuan.
+  [/iphone|ipad|ios/i, 'iOS'],
   [/mac os x|macintosh/i, 'macOS'],
   [/android/i, 'Android'],
-  [/iphone|ipad|ios/i, 'iOS'],
   [/linux/i, 'Linux'],
 ];
 
