@@ -48,9 +48,33 @@ function buildRedisClient(): Redis | Cluster | null {
       // Jangan pernah membuat request HTTP menunggu retry Redis
       // berkali-kali — maksimal 2 percobaan, lalu menyerah cepat
       // supaya `cache.ts` bisa fallback ke database tanpa membuat
-      // request lambat.
+      // request lambat. INI SUDAH CUKUP untuk tujuan itu — jangan
+      // dicampur dengan `retryStrategy` di bawah (dua hal BEDA:
+      // `maxRetriesPerRequest` = retry PER PERINTAH/command,
+      // `retryStrategy` = retry KONEKSI di BACKGROUND).
       maxRetriesPerRequest: 2,
-      retryStrategy: (times) => (times > 2 ? null : Math.min(times * 200, 1000)),
+      // SEBELUMNYA `times > 2 ? null : ...` — mengembalikan `null`
+      // artinya ioredis MENYERAH RECONNECT SELAMANYA setelah 2x
+      // percobaan (bukan cuma per-request). Ini menyebabkan DUA
+      // masalah nyata (ditemukan lewat verifikasi manual graceful
+      // shutdown, P0/Fase-1 item 1.5): (1) kalau Redis mati lalu
+      // hidup lagi, aplikasi TIDAK PERNAH reconnect sampai proses
+      // di-restart manual — padahal cache seharusnya otomatis pulih
+      // begitu Redis kembali; (2) saat ioredis menyerah, ia
+      // memanggil `flushQueue()` internal yang me-reject command
+      // handshake-nya SENDIRI (bukan dari kode aplikasi) dengan
+      // "Connection is closed." — rejection ini TIDAK ADA yang
+      // menangkap, jadi lolos jadi `unhandledRejection` di level
+      // proses, yang oleh `server.ts` (P0 hardening) dianggap FATAL
+      // dan mematikan SELURUH APLIKASI — padahal Redis SENGAJA
+      // didesain sebagai dependency opsional (lihat komentar di atas
+      // `redisClient`). Fix: JANGAN PERNAH kembalikan `null` di sini
+      // — biarkan ioredis terus mencoba reconnect di background
+      // dengan delay yang dibatasi (maks 1 detik), selamanya. Ini
+      // TIDAK mengubah perilaku per-request (`maxRetriesPerRequest`
+      // di atas tetap yang menjaga HTTP request tidak menunggu
+      // lama) — murni menutup celah "menyerah permanen" ini.
+      retryStrategy: (times) => Math.min(times * 200, 1000),
       lazyConnect: false,
     });
   }
