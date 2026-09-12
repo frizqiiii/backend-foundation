@@ -92,6 +92,20 @@ describe('toPdfBuffer', () => {
     expect(buffer.subarray(0, 5).toString()).toBe('%PDF-');
   });
 
+  // CATATAN (Fase 1 item 1.2, mutation testing): sempat dicoba perkuat
+  // assertion di atas pakai `pdf-parse` untuk verifikasi isi teks PDF
+  // sungguhan (judul, header, nilai, jumlah halaman). DIBATALKAN —
+  // `pdf-parse@1.1.1` (bundel `pdf.js` versi ~2018) terbukti TIDAK
+  // KONSISTEN antar-environment (`UnknownErrorException: bad XRef
+  // entry` muncul untuk PDF yang di environment lain terbaca normal;
+  // sudah di-cross-check dengan Poppler/`pdftotext` — PDF-nya sendiri
+  // VALID, jadi ini murni ketidakstabilan library test, bukan bug di
+  // `toPdfBuffer`). Menambah dependency yang rapuh lintas-environment
+  // demi menaikkan mutation score tidak sepadan — mutation score
+  // `toPdfBuffer` untuk detail layout/formatting (lebar kolom, posisi
+  // teks, warna, threshold pagination, dst) DITERIMA apa adanya untuk
+  // saat ini; assertion tetap di level "PDF valid" seperti semula.
+
   it('P5 — value null dirender sebagai string kosong (tidak melempar error)', async () => {
     const rows: Row[] = [{ id: '1', name: 'Budi', note: null }];
     await expect(toPdfBuffer(rows, columns, 'Judul')).resolves.toBeInstanceOf(Buffer);
