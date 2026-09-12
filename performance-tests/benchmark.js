@@ -46,9 +46,14 @@ export const options = {
     // TIDAK ada threshold pass/fail di sini — SENGAJA (lihat
     // rationale metodologi di atas). k6 tetap butuh minimal satu key
     // di `thresholds` supaya ringkasan akhir menyorot metrik ini,
-    // tapi kondisinya sengaja selalu true (`count>=0`) — murni untuk
-    // tampilan laporan, bukan gate.
-    benchmark_health_ms: ['count>=0'],
+    // tapi kondisinya sengaja selalu true (`avg>=0`) — murni untuk
+    // tampilan laporan, bukan gate. SEBELUMNYA `count>=0` — k6 TIDAK
+    // mendukung `count` sebagai metode agregasi untuk metric bertipe
+    // Trend (cuma `avg`/`min`/`max`/`med`/`p(N)`), jadi run selalu
+    // gagal start dengan error "unsupported aggregation method count"
+    // sebelum sempat mengirim satu request pun — ketahuan pertama kali
+    // dijalankan sungguhan (P0/Fase-1 item 1.3).
+    benchmark_health_ms: ['avg>=0'],
   },
 };
 
