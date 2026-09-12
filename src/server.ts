@@ -80,6 +80,40 @@ const shutdown = createGuardedShutdown(shutdownImpl, (signal) =>
   logger.warn(`Menerima ${signal} saat shutdown sudah berjalan — diabaikan.`)
 );
 
+/**
+ * Redis (baik cache di `redisClient` maupun BullMQ di
+ * `queueConnection`) SENGAJA diperlakukan sebagai dependency OPSIONAL
+ * di seluruh aplikasi ini (lihat komentar di `shared/config/redis.ts`
+ * — cache di-bypass, bukan jadi single point of failure, kalau Redis
+ * tidak reachable). Prinsip yang sama harus berlaku saat SHUTDOWN:
+ * kalau koneksi Redis SUDAH terputus/menyerah reconnect SEBELUM
+ * `shutdown()` dipanggil (mis. Redis memang tidak pernah jalan),
+ * `.quit()` akan melempar `"Connection is closed."` — ini BUKAN
+ * kegagalan shutdown yang sesungguhnya (HTTP server + database tetap
+ * bisa ditutup dengan bersih), jadi tidak boleh membuat SELURUH
+ * shutdown dianggap gagal (`process.exit(1)`) hanya gara-gara
+ * dependency opsional yang memang sudah mati. Kegagalan `.quit()`
+ * dicatat sebagai warning, bukan mem-propagate ke `Promise.all` di
+ * `shutdownImpl` (beda dari `prisma.$disconnect()`, yang TETAP
+ * dibiarkan bisa menggagalkan shutdown — database bukan dependency
+ * opsional).
+ */
+async function quietRedisQuit(
+  label: 'cache' | 'queue',
+  client: { quit: () => Promise<unknown> } | null
+): Promise<void> {
+  if (!client) return;
+
+  try {
+    await client.quit();
+  } catch (error) {
+    logger.warn(
+      { err: error },
+      `Gagal quit koneksi Redis (${label}) dengan bersih — kemungkinan sudah terputus sebelumnya, diabaikan (tidak menggagalkan shutdown)`
+    );
+  }
+}
+
 async function shutdownImpl(signal: string): Promise<void> {
   logger.info(`Menerima ${signal}, memulai graceful shutdown...`);
   setShuttingDown();
@@ -105,8 +139,8 @@ async function shutdownImpl(signal: string): Promise<void> {
     await Promise.all([
       prisma.$disconnect(),
       prismaRead === prisma ? Promise.resolve() : prismaRead.$disconnect(),
-      redisClient ? redisClient.quit() : Promise.resolve(),
-      queueConnection ? queueConnection.quit() : Promise.resolve(),
+      quietRedisQuit('cache', redisClient),
+      quietRedisQuit('queue', queueConnection),
     ]);
     logger.info('Koneksi database & Redis ditutup dengan bersih.');
 
