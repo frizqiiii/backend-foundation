@@ -2,10 +2,13 @@ import { withTimeout, TimeoutError } from './timeout';
 import { withRetry } from './retry';
 import { withCircuitBreaker, CircuitOpenError } from './circuit-breaker';
 import { withBulkhead, BulkheadRejectedError } from './bulkhead';
+import { logger } from '../logger';
 
 jest.mock('../logger', () => ({
   logger: { warn: jest.fn(), error: jest.fn(), info: jest.fn() },
 }));
+
+const mockedLogger = logger as jest.Mocked<typeof logger>;
 
 describe('withTimeout', () => {
   it('mengembalikan hasil fn kalau selesai sebelum batas waktu', async () => {
@@ -114,6 +117,94 @@ describe('withCircuitBreaker', () => {
     await expect(withCircuitBreaker(key, fn, options)).rejects.toThrow('gagal lagi');
     await expect(withCircuitBreaker(key, fn, options)).rejects.toThrow('gagal lagi 2');
     expect(fn).toHaveBeenCalledTimes(5);
+  });
+
+  it('P5 — CircuitOpenError.message memuat key PERSIS (bukan cuma instance-nya)', async () => {
+    const key = 'test-key-message';
+    const failingFn = jest.fn().mockRejectedValue(new Error('down'));
+
+    for (let i = 0; i < options.failureThreshold; i++) {
+      await expect(withCircuitBreaker(key, failingFn, options)).rejects.toThrow('down');
+    }
+
+    await expect(withCircuitBreaker(key, failingFn, options)).rejects.toThrow(
+      `Circuit breaker '${key}' terbuka — provider dianggap sedang down, request ditolak tanpa mencoba`
+    );
+  });
+
+  it('P5 — logger.error dipanggil dengan pesan & jumlah kegagalan PERSIS saat breaker terbuka', async () => {
+    const key = 'test-key-log-error';
+    const failingFn = jest.fn().mockRejectedValue(new Error('down'));
+
+    for (let i = 0; i < options.failureThreshold; i++) {
+      await expect(withCircuitBreaker(key, failingFn, options)).rejects.toThrow('down');
+    }
+
+    expect(mockedLogger.error).toHaveBeenCalledWith(
+      { key, consecutiveFailures: options.failureThreshold },
+      `CircuitBreaker '${key}': terbuka setelah ${options.failureThreshold} kegagalan beruntun`
+    );
+  });
+
+  it('P5 — logger.info "pulih" dipanggil HANYA saat recovery dari state BUKAN CLOSED (bukan setiap kali sukses biasa)', async () => {
+    const recoveredKey = 'test-key-log-info-recovery';
+    const alwaysOkKey = 'test-key-log-info-always-ok';
+
+    // Kasus recovery: gagal dulu (state jadi bukan CLOSED secara
+    // logis lewat consecutiveFailures), TAPI breaker baru benar-benar
+    // "terbuka" (state != CLOSED) lewat jalur HALF_OPEN — jadi kita
+    // buka penuh breaker-nya dulu, lewati timeout, baru sukses.
+    const fn = jest.fn().mockRejectedValue(new Error('down'));
+    for (let i = 0; i < options.failureThreshold; i++) {
+      await expect(withCircuitBreaker(recoveredKey, fn, options)).rejects.toThrow('down');
+    }
+    jest.useFakeTimers();
+    jest.advanceTimersByTime(options.resetTimeoutMs + 1);
+    fn.mockResolvedValueOnce('pulih');
+    await expect(withCircuitBreaker(recoveredKey, fn, options)).resolves.toBe('pulih');
+    jest.useRealTimers();
+
+    expect(mockedLogger.info).toHaveBeenCalledWith(
+      { key: recoveredKey },
+      `CircuitBreaker '${recoveredKey}': pulih, kembali ke CLOSED`
+    );
+
+    // Kasus TIDAK pernah gagal (selalu CLOSED) — logger.info TIDAK
+    // BOLEH dipanggil sama sekali untuk key ini, walau fn berhasil.
+    // Menutup mutant yang menghapus kondisi `if (breaker.state !==
+    // 'CLOSED')` (over-logging kalau kondisi ini dihapus).
+    await withCircuitBreaker(alwaysOkKey, async () => 'ok', options);
+    expect(mockedLogger.info).not.toHaveBeenCalledWith(
+      { key: alwaysOkKey },
+      expect.stringContaining('pulih')
+    );
+  });
+
+  it('P5 — probe HALF_OPEN GAGAL: breaker kembali OPEN (bukan tetap HALF_OPEN/CLOSED), openedAt di-reset, request BERIKUTNYA langsung ditolak lagi tanpa menunggu resetTimeoutMs lagi', async () => {
+    const key = 'test-key-half-open-fails';
+    const fn = jest.fn().mockRejectedValue(new Error('down'));
+
+    // Buka breaker.
+    for (let i = 0; i < options.failureThreshold; i++) {
+      await expect(withCircuitBreaker(key, fn, options)).rejects.toThrow('down');
+    }
+
+    jest.useFakeTimers();
+    jest.advanceTimersByTime(options.resetTimeoutMs + 1);
+
+    // Probe HALF_OPEN ini GAGAL LAGI (provider belum benar-benar pulih).
+    await expect(withCircuitBreaker(key, fn, options)).rejects.toThrow('down');
+
+    // Breaker HARUS kembali OPEN sekarang — panggilan BERIKUTNYA,
+    // SEBELUM `resetTimeoutMs` berikutnya lewat, harus ditolak sebagai
+    // CircuitOpenError (BUKAN diizinkan lewat sebagai probe lagi, dan
+    // BUKAN pula error 'down' dari fn — itu berarti fn tidak
+    // dipanggil sama sekali, sesuai desain OPEN).
+    fn.mockClear();
+    await expect(withCircuitBreaker(key, fn, options)).rejects.toThrow(CircuitOpenError);
+    expect(fn).not.toHaveBeenCalled();
+
+    jest.useRealTimers();
   });
 
   it('P4 — HANYA satu probe HALF_OPEN yang boleh berjalan; pemanggil concurrent lain ditolak, bukan ikut lolos', async () => {
