@@ -14,7 +14,7 @@ RUN apk add --no-cache openssl libc6-compat
 # karena stage `builder` butuh typescript/ts-node dkk untuk compile.
 # ============================================================================
 FROM base AS deps
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json .npmrc ./
 # python3/make/g++ dibutuhkan node-gyp untuk kompilasi native addon (bcrypt).
 # --ignore-scripts: melewati SELURUH lifecycle script (termasuk `prepare`
 # husky) — tidak relevan di image Docker, dan husky butuh git repo yang
@@ -42,7 +42,7 @@ RUN npm run build
 # ts-node-dev, eslint, jest, dsb) untuk meminimalkan ukuran image akhir.
 # ============================================================================
 FROM base AS prod-deps
-COPY package.json package-lock.json ./
+COPY package.json package-lock.json .npmrc ./
 # --ignore-scripts: sama seperti stage `deps` — di sini bahkan lebih wajib,
 # karena husky (devDependency) sengaja TIDAK terinstal via --omit=dev,
 # jadi script `prepare` pasti gagal ("husky: not found") kalau tidak dilewati.
