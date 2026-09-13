@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import zlib from 'zlib';
 import { toCsv, toXlsxBuffer, toPdfBuffer, type ExportColumn } from './export';
 
 interface Row {
@@ -82,8 +83,48 @@ describe('toXlsxBuffer', () => {
   });
 });
 
+/**
+ * Ekstrak teks dari PDF TANPA dependency eksternal — cuma `zlib`
+ * bawaan Node. Stream konten PDF (operator `Tj`/`TJ`) dikompresi
+ * FlateDecode standar (zlib deflate) dan teksnya muncul sebagai hex
+ * string di antara `<...>` (1 byte = 1 karakter untuk font simpel
+ * non-Identity-H yang dipakai `pdfkit` secara default).
+ *
+ * KENAPA INI, BUKAN `pdf-parse`: sempat dicoba pakai `pdf-parse` untuk
+ * tujuan yang sama — DIBATALKAN karena terbukti tidak konsisten
+ * antar-environment (`bad XRef entry` di komputer user, padahal lolos
+ * di sandbox; sudah di-cross-check dengan Poppler bahwa PDF-nya
+ * sendiri valid, jadi murni ketidakstabilan library itu). Pendekatan
+ * ini cuma pakai `zlib` (modul inti Node, deterministik, sama di semua
+ * environment) + regex/hex-decode sederhana — tidak ada permukaan
+ * untuk ketidakstabilan lintas-environment seperti itu.
+ */
+function extractPdfText(buffer: Buffer): { text: string; contentStreamCount: number } {
+  const raw = buffer.toString('latin1');
+  const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+  let combined = '';
+  let contentStreamCount = 0;
+  let match: RegExpExecArray | null;
+  while ((match = streamRegex.exec(raw)) !== null) {
+    const streamData = Buffer.from(match[1], 'latin1');
+    try {
+      const inflated = zlib.inflateSync(streamData).toString('latin1');
+      const hexStrings = inflated.match(/<([0-9a-fA-F]+)>/g);
+      if (hexStrings) {
+        contentStreamCount += 1;
+        for (const hex of hexStrings) {
+          combined += Buffer.from(hex.slice(1, -1), 'hex').toString('latin1');
+        }
+      }
+    } catch {
+      // Bukan stream FlateDecode (mis. data font biner) — lewati, bukan error.
+    }
+  }
+  return { text: combined, contentStreamCount };
+}
+
 describe('toPdfBuffer', () => {
-  it('menghasilkan buffer PDF valid (diawali magic bytes %PDF) dengan judul dan jumlah baris', async () => {
+  it('menghasilkan buffer PDF valid (diawali magic bytes %PDF)', async () => {
     const rows: Row[] = [{ id: '1', name: 'Budi', note: 'Catatan' }];
 
     const buffer = await toPdfBuffer(rows, columns, 'Laporan Data');
@@ -92,26 +133,37 @@ describe('toPdfBuffer', () => {
     expect(buffer.subarray(0, 5).toString()).toBe('%PDF-');
   });
 
-  // CATATAN (Fase 1 item 1.2, mutation testing): sempat dicoba perkuat
-  // assertion di atas pakai `pdf-parse` untuk verifikasi isi teks PDF
-  // sungguhan (judul, header, nilai, jumlah halaman). DIBATALKAN —
-  // `pdf-parse@1.1.1` (bundel `pdf.js` versi ~2018) terbukti TIDAK
-  // KONSISTEN antar-environment (`UnknownErrorException: bad XRef
-  // entry` muncul untuk PDF yang di environment lain terbaca normal;
-  // sudah di-cross-check dengan Poppler/`pdftotext` — PDF-nya sendiri
-  // VALID, jadi ini murni ketidakstabilan library test, bukan bug di
-  // `toPdfBuffer`). Menambah dependency yang rapuh lintas-environment
-  // demi menaikkan mutation score tidak sepadan — mutation score
-  // `toPdfBuffer` untuk detail layout/formatting (lebar kolom, posisi
-  // teks, warna, threshold pagination, dst) DITERIMA apa adanya untuk
-  // saat ini; assertion tetap di level "PDF valid" seperti semula.
+  it('P5 — isi teks PDF (bukan cuma magic bytes) memuat judul, header kolom, nilai data, dan jumlah baris PERSIS', async () => {
+    const rows: Row[] = [
+      { id: '1', name: 'Budi', note: 'Catatan A' },
+      { id: '2', name: 'Sari', note: 'Catatan B' },
+    ];
 
-  it('P5 — value null dirender sebagai string kosong (tidak melempar error)', async () => {
-    const rows: Row[] = [{ id: '1', name: 'Budi', note: null }];
-    await expect(toPdfBuffer(rows, columns, 'Judul')).resolves.toBeInstanceOf(Buffer);
+    const buffer = await toPdfBuffer(rows, columns, 'Laporan Data Uji');
+    const { text } = extractPdfText(buffer);
+
+    expect(text).toContain('Laporan Data Uji'); // judul
+    expect(text).toContain('Total baris: 2'); // ANGKA PERSIS, bukan cuma "ada teks"
+    expect(text).toContain('ID');
+    expect(text).toContain('Nama');
+    expect(text).toContain('Catatan');
+    expect(text).toContain('Budi');
+    expect(text).toContain('Sari');
+    expect(text).toContain('Catatan A');
+    expect(text).toContain('Catatan B');
   });
 
-  it('P5 — menangani banyak baris (memicu pagination manual doc.addPage()) tanpa error', async () => {
+  it('P5 — value null dirender sebagai string kosong (tidak melempar error, dan TIDAK memunculkan teks "null" literal di PDF)', async () => {
+    const rows: Row[] = [{ id: '1', name: 'Budi', note: null }];
+
+    const buffer = await toPdfBuffer(rows, columns, 'Judul');
+    const { text } = extractPdfText(buffer);
+
+    expect(text).not.toContain('null');
+    expect(text).toContain('Budi');
+  });
+
+  it('P5 — menangani banyak baris (memicu pagination manual doc.addPage()): benar-benar menghasilkan LEBIH DARI 1 content stream (≈ lebih dari 1 halaman), bukan cuma "tidak error"', async () => {
     const manyRows: Row[] = Array.from({ length: 200 }, (_, i) => ({
       id: String(i),
       name: `User ${i}`,
@@ -119,13 +171,24 @@ describe('toPdfBuffer', () => {
     }));
 
     const buffer = await toPdfBuffer(manyRows, columns, 'Laporan Besar');
+    const { text, contentStreamCount } = extractPdfText(buffer);
 
-    expect(buffer).toBeInstanceOf(Buffer);
-    expect(buffer.length).toBeGreaterThan(0);
+    // Menutup mutant di kondisi `doc.y > PAGE_BOTTOM_Y - 20` (mis. jadi
+    // `doc.y > 0` atau angka ambang lain) — kalau kondisi trigger
+    // addPage() berubah, jumlah content stream aktual ikut berubah.
+    expect(contentStreamCount).toBeGreaterThan(1);
+    expect(text).toContain('User 0');
+    expect(text).toContain('User 199');
+    expect(text).toContain('Total baris: 200');
   });
 
-  it('menghasilkan PDF valid kalau rows kosong (hanya header + judul)', async () => {
+  it('menghasilkan PDF valid kalau rows kosong (hanya header + judul, TEPAT 1 content stream, "Total baris: 0")', async () => {
     const buffer = await toPdfBuffer([], columns, 'Judul Kosong');
+    const { text, contentStreamCount } = extractPdfText(buffer);
+
     expect(buffer.subarray(0, 5).toString()).toBe('%PDF-');
+    expect(contentStreamCount).toBe(1);
+    expect(text).toContain('Judul Kosong');
+    expect(text).toContain('Total baris: 0');
   });
 });
