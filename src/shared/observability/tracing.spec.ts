@@ -33,7 +33,7 @@ describe('startTracing', () => {
         OTLPTraceExporter: jest.fn().mockImplementation(() => ({})),
       }));
       jest.doMock('@opentelemetry/resources', () => ({
-        Resource: jest.fn().mockImplementation(() => ({})),
+        resourceFromAttributes: jest.fn().mockImplementation((attrs) => attrs),
       }));
       jest.doMock('../config/env', () => ({
         env: {

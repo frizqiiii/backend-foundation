@@ -2,7 +2,7 @@ import { NodeSDK } from '@opentelemetry/sdk-node';
 import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
 import { PrismaInstrumentation } from '@prisma/instrumentation';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
-import { Resource } from '@opentelemetry/resources';
+import { resourceFromAttributes } from '@opentelemetry/resources';
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions';
 // Type-only — DIHAPUS SELURUHNYA saat kompilasi (tidak menghasilkan
 // `require()` apa pun), jadi tidak melanggar urutan "harus jadi import
@@ -48,7 +48,7 @@ export function startTracing(): void {
   }
 
   const sdk = new NodeSDK({
-    resource: new Resource({
+    resource: resourceFromAttributes({
       [ATTR_SERVICE_NAME]: env.OTEL_SERVICE_NAME,
       [ATTR_SERVICE_VERSION]: process.env.npm_package_version ?? 'unknown',
       'deployment.environment': env.NODE_ENV,
