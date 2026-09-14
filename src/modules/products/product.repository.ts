@@ -1,11 +1,17 @@
 import type { PrismaClient, Product, Prisma } from '@prisma/client';
 import { pagination } from '../../shared/pagination';
-import { getTenantContext } from '../../shared/tenant/tenant-context';
+import { getTenantContext, getScopedPrisma } from '../../shared/tenant/tenant-context';
 import type { ProductCategoryName, ListProductsQueryDto } from './product.dto';
 
 /**
  * Repository Layer — HANYA bertanggung jawab atas akses data (query
  * Prisma), persis pola yang sama seperti `UserRepository`.
+ *
+ * Fase 4 (RLS) — REFERENCE IMPLEMENTATION untuk pola `getScopedPrisma`
+ * yang perlu diterapkan bertahap ke repository tenant-scoped lain
+ * (`EventRepository`, `ApiKeyRepository`, `WebhookEndpointRepository`,
+ * `ExportJobRepository` — lihat checklist di
+ * docs/tenant-migration-strategy.md).
  */
 export class ProductRepository {
   /**
@@ -18,6 +24,15 @@ export class ProductRepository {
    * karena WAJIB melihat data paling baru & konsisten. Lihat komentar
    * lengkap trade-off replication lag di `DATABASE_REPLICA_URL`
    * (`env.ts`) sebelum menerapkan pola ini ke repository lain.
+   *
+   * Fase 4 (RLS) — `prismaRead` SENGAJA BELUM ikut dilindungi RLS di
+   * iterasi ini (read-replica adalah koneksi/server FISIK terpisah
+   * dari primary, tidak bisa ikut transaksi `$transaction` yang sama
+   * dengan `prisma` primary — butuh desain policy/transaksi read-only
+   * TERPISAH). `findMany` di bawah TETAP mengandalkan filter aplikasi
+   * manual (`where.tenantId`) seperti sebelum Fase 4 — dicatat sebagai
+   * gap yang diketahui & disengaja, BUKAN celah yang terlewat, di
+   * docs/tenant-migration-strategy.md.
    */
   constructor(
     private readonly prisma: PrismaClient,
@@ -29,6 +44,13 @@ export class ProductRepository {
    * (bukan parameter yang wajib dioper Controller/Service), sama pola
    * seperti `findMany`: request tanpa header tenant tetap membuat
    * produk seperti sebelum Phase 11 (`tenantId: null`), tidak error.
+   *
+   * Fase 4 (RLS) — dipanggil lewat `getScopedPrisma(this.prisma)`:
+   * kalau tenant context aktif, INSERT ini jalan di dalam transaksi
+   * request (`tx`) yang sudah membawa `app.tenant_id`, jadi `WITH CHECK`
+   * policy di migration RLS ikut menegakkan `tenantId` yang dikirim
+   * memang cocok dengan tenant aktif — pertahanan berlapis di atas
+   * filter aplikasi ini sendiri.
    */
   async create(data: {
     title: string;
@@ -38,7 +60,7 @@ export class ProductRepository {
     userId: string;
   }): Promise<Product> {
     const { tenantId } = getTenantContext();
-    return this.prisma.product.create({ data: { ...data, tenantId } });
+    return getScopedPrisma(this.prisma).product.create({ data: { ...data, tenantId } });
   }
 
   /**
@@ -50,8 +72,7 @@ export class ProductRepository {
    * `count` dibungkus `$transaction` (sama seperti
    * `EventRepository.findMany`) agar `total` selalu sinkron dengan
    * `data` dari snapshot yang sama.
-   */
-  /**
+   *
    * Phase 11 — tenant-scoped SECARA OPSIONAL: `where.tenantId` HANYA
    * ditambahkan kalau tenant context sedang aktif (lihat
    * `tenantMiddleware`). Ini REFERENCE IMPLEMENTATION untuk pola yang
@@ -64,6 +85,10 @@ export class ProductRepository {
    * berperilaku IDENTIK dengan sebelum Phase 11 (melihat SEMUA produk
    * lintas tenant), bukan tiba-tiba kosong karena disangka
    * "tenant kosong = tidak ada apa-apa".
+   *
+   * Fase 4 (RLS) — method ini TETAP memakai `this.prismaRead` APA
+   * ADANYA (BUKAN `getScopedPrisma`) — lihat catatan RLS di komentar
+   * constructor di atas untuk alasannya.
    */
   async findMany(query: ListProductsQueryDto): Promise<{ data: Product[]; total: number }> {
     const { tenantId } = getTenantContext();
@@ -78,12 +103,6 @@ export class ProductRepository {
       where.category = query.category;
     }
 
-    // Phase 14 — `this.prismaRead`, BUKAN `this.prisma`: listing
-    // adalah query BACA murni, kandidat ideal untuk read replica
-    // (lihat komentar constructor di atas). Kedua panggilan di dalam
-    // `$transaction` HARUS memakai client yang SAMA (`prismaRead`) —
-    // Prisma `$transaction` array butuh seluruh operasinya berasal
-    // dari satu instance client yang sama.
     const [data, total] = await this.prismaRead.$transaction([
       this.prismaRead.product.findMany({
         where,
@@ -105,17 +124,13 @@ export class ProductRepository {
    * `upgradeProduct` (yang akan menganggapnya `NotFoundError`, persis
    * seolah baris ini benar-benar tidak ada).
    *
-   * Tenant-scoped SECARA OPSIONAL — pola & alasan IDENTIK dengan
-   * `findMany` di atas (lihat komentarnya): `where.tenantId` hanya
-   * ditambahkan kalau tenant context sedang aktif, supaya client
-   * lama (tanpa header `X-Tenant-ID`) tetap berperilaku persis
-   * seperti sebelum Phase 11. Sebelum perubahan ini, `findById`
-   * adalah SATU-SATUNYA method baca di repository ini yang belum
-   * ikut tenant-scoped seperti `findMany` — pemanggilnya saat ini
-   * (`upgradeProduct`/`deleteProduct`) sudah aman lewat pengecekan
-   * `isOwner`/`product.moderate` di Service, jadi ini murni
-   * pertahanan berlapis (defense-in-depth) untuk isolasi tenant yang
-   * konsisten, bukan menutup celah yang sudah tereksploitasi.
+   * Tenant-scoped SECARA OPSIONAL di level APLIKASI (pola & alasan
+   * IDENTIK dengan `findMany`), DITAMBAH pertahanan RLS di level
+   * DATABASE lewat `getScopedPrisma` (Fase 4) — kalau tenant context
+   * aktif, method ini otomatis tidak akan pernah melihat baris tenant
+   * lain, bahkan kalau (secara hipotetis) filter `where.tenantId` di
+   * bawah ini suatu saat terhapus/salah tulis oleh perubahan
+   * berikutnya.
    */
   async findById(id: string): Promise<Product | null> {
     const { tenantId } = getTenantContext();
@@ -123,7 +138,7 @@ export class ProductRepository {
     if (tenantId) {
       where.tenantId = tenantId;
     }
-    return this.prisma.product.findFirst({ where });
+    return getScopedPrisma(this.prisma).product.findFirst({ where });
   }
 
   /**
@@ -132,6 +147,25 @@ export class ProductRepository {
    * violation saat insert log), update kategori ikut di-rollback.
    * Tanpa `$transaction`, ada celah nyata: kategori produk berubah
    * tapi riwayatnya tidak tercatat (atau sebaliknya).
+   *
+   * Fase 4 (RLS) — method ini PALING RUMIT untuk dikonversi ke
+   * `getScopedPrisma`, karena aslinya memakai `$transaction([...])`
+   * (array form) untuk menjamin atomicity DUA operasi. Masalahnya:
+   * `Prisma.TransactionClient` (yang dikembalikan `getScopedPrisma`
+   * SAAT tenant context aktif) TIDAK PUNYA method `$transaction` sama
+   * sekali — Postgres/Prisma tidak mendukung transaksi bersarang.
+   *
+   * Solusinya, dua jalur berbeda tergantung ada/tidaknya tenant aktif:
+   *   - TIDAK ada tenant aktif -> `client` di bawah adalah
+   *     `this.prisma` (singleton biasa) -> HARUS tetap dibungkus
+   *     `$transaction([...])` manual seperti sebelumnya, supaya dua
+   *     operasi ini tetap atomic satu sama lain.
+   *   - ADA tenant aktif -> `client` adalah transaction client (`tx`)
+   *     milik SATU transaksi yang sudah dibuka `tenantMiddleware`
+   *     untuk SELURUH request ini -> dua operasi di bawah cukup
+   *     dijalankan BERURUTAN langsung lewat `client` (SUDAH otomatis
+   *     atomic terhadap transaksi request yang sama), TIDAK BOLEH
+   *     dibungkus `$transaction([...])` lagi (akan error runtime).
    *
    * Cast `as Product['category']` dipakai alih-alih meng-import enum
    * `ProductCategory` dari `@prisma/client` di Service/Controller —
@@ -145,21 +179,30 @@ export class ProductRepository {
     toCategory: ProductCategoryName;
     performedById: string;
   }): Promise<Product> {
-    const [updatedProduct] = await this.prisma.$transaction([
-      this.prisma.product.update({
-        where: { id: params.productId },
-        data: { category: params.toCategory as Product['category'] },
-      }),
-      this.prisma.productUpgradeLog.create({
-        data: {
-          productId: params.productId,
-          fromCategory: params.fromCategory as Product['category'],
-          toCategory: params.toCategory as Product['category'],
-          performedById: params.performedById,
-        },
-      }),
-    ]);
+    const client = getScopedPrisma(this.prisma);
+    const logData = {
+      productId: params.productId,
+      fromCategory: params.fromCategory as Product['category'],
+      toCategory: params.toCategory as Product['category'],
+      performedById: params.performedById,
+    };
 
+    if (client === this.prisma) {
+      const [updatedProduct] = await this.prisma.$transaction([
+        this.prisma.product.update({
+          where: { id: params.productId },
+          data: { category: params.toCategory as Product['category'] },
+        }),
+        this.prisma.productUpgradeLog.create({ data: logData }),
+      ]);
+      return updatedProduct;
+    }
+
+    const updatedProduct = await client.product.update({
+      where: { id: params.productId },
+      data: { category: params.toCategory as Product['category'] },
+    });
+    await client.productUpgradeLog.create({ data: logData });
     return updatedProduct;
   }
 
@@ -168,8 +211,16 @@ export class ProductRepository {
    * `UserRepository.delete`: mengisi `deletedAt`, BUKAN
    * `prisma.product.delete()` fisik, supaya `ProductUpgradeLog` milik
    * produk ini (riwayat upgrade) tidak ikut hilang/rusak referensinya.
+   *
+   * Fase 4 (RLS) — lewat `getScopedPrisma`: kalau tenant context
+   * aktif, `WITH CHECK` policy RLS memastikan update ini TIDAK BISA
+   * menembus baris tenant lain walau (secara hipotetis) `id` yang
+   * dioper berasal dari input yang salah/dimanipulasi.
    */
   async delete(id: string): Promise<Product> {
-    return this.prisma.product.update({ where: { id }, data: { deletedAt: new Date() } });
+    return getScopedPrisma(this.prisma).product.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
   }
 }
