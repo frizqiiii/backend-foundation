@@ -36,6 +36,30 @@ describe('withTimeout', () => {
       )
     ).rejects.toThrow('gagal biasa');
   });
+
+  // P5-lanjutan — pakai jest.useFakeTimers() (BUKAN timer sungguhan
+  // seperti test di atas) supaya deterministik: mutation testing
+  // pada baris clearTimeout() sempat flaky run-ke-run karena
+  // berinteraksi dengan timer nyata + delay nyata di test lain.
+  it('membersihkan timer (clearTimeout) setelah fn selesai duluan — timer basi tidak boleh tetap menyala di background', async () => {
+    jest.useFakeTimers();
+    const clearTimeoutSpy = jest.spyOn(global, 'clearTimeout');
+    try {
+      await withTimeout(async () => 'selesai duluan', 5000, 'test');
+      expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      clearTimeoutSpy.mockRestore();
+      jest.useRealTimers();
+    }
+  });
+});
+
+describe('TimeoutError', () => {
+  it('membentuk .message & .name yang PERSIS — supaya log/observability bisa membedakannya dari Error generik lain, bukan cuma "sesuatu gagal"', () => {
+    const error = new TimeoutError('panggilan-provider-x', 5000);
+    expect(error.message).toBe('panggilan-provider-x: timeout setelah 5000ms');
+    expect(error.name).toBe('TimeoutError');
+  });
 });
 
 describe('withRetry', () => {
