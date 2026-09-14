@@ -96,7 +96,11 @@ VERIFY_DATABASE_URL="postgresql://..." \
 khusus verifikasi — skrip menolak berjalan kalau kosong ATAU kebetulan
 sama dengan `DATABASE_URL` production (lihat komentar di skrip),
 karena `pg_restore --clean` di dalamnya bersifat destruktif terhadap
-database tujuan.
+database tujuan. **Prasyarat**: database tujuan itu sendiri harus
+SUDAH ADA (`createdb nama_db_verifikasi`) sebelum skrip dijalankan —
+`pg_restore` mengisi database yang sudah ada, bukan membuat database
+baru dari nol. Kalau belum ada, skrip akan gagal jelas dengan pesan
+`database "..." does not exist` (bukan gagal diam-diam).
 
 Exit code bukan-nol kalau backup terbukti tidak valid — cocok
 dijadwalkan cron/CI bulanan sebagai trigger alert (belum ada

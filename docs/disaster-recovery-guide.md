@@ -19,9 +19,15 @@ mekanika, dokumen ini fokus ke KAPAN/KENAPA/target waktu).
 
 **Catatan kejujuran**: angka RTO/RPO di atas adalah **target yang
 diturunkan dari kapabilitas infrastruktur yang ADA SEKARANG**
-(cadence backup harian, waktu provisioning manual yang wajar) — BUKAN
-SLA yang sudah diuji lewat DR drill sungguhan. Lihat "Uji DR Secara
-Berkala" di bawah untuk memvalidasi angka ini benar-benar tercapai.
+(cadence backup harian, waktu provisioning manual yang wajar), BUKAN
+SLA yang diukur di skala production sungguhan. **Update**: mekanika
+prosedur recovery-nya (backup → disaster → provision → restore →
+verifikasi integritas data → deteksi backup korup) SUDAH diuji lewat
+DR drill nyata — lihat `docs/disaster-recovery-drill-results.md` untuk
+hasilnya. Yang masih belum tervalidasi di skala production: waktu
+`prisma migrate deploy` + app boot + `GET /ready`, dan waktu
+provisioning infrastruktur baru sungguhan (bukan simulasi) — lihat
+bagian "Yang TIDAK tercakup" di dokumen hasil drill tersebut.
 
 ## Skenario Detail
 
