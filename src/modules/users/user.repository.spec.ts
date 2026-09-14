@@ -22,7 +22,7 @@ describe('UserRepository', () => {
     (prisma.user.findFirst as jest.Mock).mockResolvedValue(null);
     const repository = new UserRepository(prisma);
 
-    await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme' }, () =>
+    await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme', db: null }, () =>
       repository.findByEmail('user@example.com')
     );
 
@@ -36,7 +36,7 @@ describe('UserRepository', () => {
     (prisma.user.findFirst as jest.Mock).mockResolvedValue(null);
     const repository = new UserRepository(prisma);
 
-    await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme' }, () =>
+    await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme', db: null }, () =>
       repository.findById('u1')
     );
 
@@ -69,7 +69,7 @@ describe('UserRepository', () => {
       (prisma.$transaction as jest.Mock).mockResolvedValue([[], 0]);
       const repository = new UserRepository(prisma);
 
-      await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme' }, () =>
+      await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme', db: null }, () =>
         repository.findMany({ skip: 0, take: 10 })
       );
 
@@ -97,7 +97,7 @@ describe('UserRepository', () => {
       (prisma.user.create as jest.Mock).mockResolvedValue({});
       const repository = new UserRepository(prisma);
 
-      await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme' }, () =>
+      await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme', db: null }, () =>
         repository.create(data)
       );
 

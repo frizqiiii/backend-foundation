@@ -46,7 +46,7 @@ describe('EventRepository', () => {
       (prisma.event.create as jest.Mock).mockResolvedValue({});
       const repository = new EventRepository(prisma);
 
-      await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme' }, () =>
+      await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme', db: null }, () =>
         repository.create(baseEventData)
       );
 
@@ -116,7 +116,7 @@ describe('EventRepository', () => {
       (prisma.$transaction as jest.Mock).mockResolvedValue([[], 0]);
       const repository = new EventRepository(prisma);
 
-      await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme' }, () =>
+      await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme', db: null }, () =>
         repository.findMany({ page: 1, limit: 10 } as ListEventsQueryDto)
       );
 
@@ -144,7 +144,7 @@ describe('EventRepository', () => {
       (prisma.event.findFirst as jest.Mock).mockResolvedValue(null);
       const repository = new EventRepository(prisma);
 
-      await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme' }, () =>
+      await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme', db: null }, () =>
         repository.findById('e1')
       );
 

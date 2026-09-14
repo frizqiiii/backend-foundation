@@ -49,7 +49,7 @@ describe('ProductRepository', () => {
       (prisma.product.create as jest.Mock).mockResolvedValue({});
       const repository = new ProductRepository(prisma);
 
-      await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme' }, () =>
+      await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme', db: null }, () =>
         repository.create(baseProductData)
       );
 
@@ -114,7 +114,7 @@ describe('ProductRepository', () => {
       (prisma.$transaction as jest.Mock).mockResolvedValue([[], 0]);
       const repository = new ProductRepository(prisma);
 
-      await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme' }, () =>
+      await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme', db: null }, () =>
         repository.findMany({ page: 1, limit: 10 } as ListProductsQueryDto)
       );
 
@@ -142,7 +142,7 @@ describe('ProductRepository', () => {
       (prisma.product.findFirst as jest.Mock).mockResolvedValue(null);
       const repository = new ProductRepository(prisma);
 
-      await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme' }, () =>
+      await runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme', db: null }, () =>
         repository.findById('p1')
       );
 
