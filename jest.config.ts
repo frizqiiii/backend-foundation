@@ -15,7 +15,16 @@ const config: Config = {
   rootDir: '.',
   roots: ['<rootDir>/src'],
   testMatch: ['**/*.spec.ts', '**/*.test.ts'],
-  testPathIgnorePatterns: ['/node_modules/', '\\.contract\\.spec\\.ts$'],
+  testPathIgnorePatterns: [
+    '/node_modules/',
+    '\\.contract\\.spec\\.ts$',
+    // Fase 4 (RLS) — SATU-SATUNYA test di project ini yang butuh
+    // koneksi database SUNGGUHAN (bukan mock). Dikeluarkan dari run
+    // normal (yang pakai DATABASE_URL dummy dari `jest.setup.ts`) —
+    // punya config & database sendiri, lihat `jest.config.rls-e2e.ts`
+    // + script `test:rls` di `package.json`.
+    'rls-bypass\\.e2e\\.spec\\.ts$',
+  ],
   setupFiles: ['<rootDir>/jest.setup.ts'],
   clearMocks: true,
   collectCoverageFrom: [
