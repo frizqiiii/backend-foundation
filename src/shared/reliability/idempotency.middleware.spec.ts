@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { idempotencyMiddleware } from './idempotency.middleware';
 import { withLock } from '../concurrency/distributed-lock';
+import { logger } from '../logger';
 
 jest.mock('../logger', () => ({
   logger: { warn: jest.fn(), error: jest.fn(), info: jest.fn() },
@@ -109,6 +110,22 @@ describe('idempotencyMiddleware', () => {
     await middleware(req, res, next);
 
     expect(mockedWithLock).toHaveBeenCalled();
+    // Pastikan userId benar-benar fallback ke 'anonymous' (bukan string
+    // kosong) saat request tidak punya req.user — sekaligus membuktikan
+    // key yang dikirim ke withLock persis sesuai format yang didesain
+    // (bukan cuma "dipanggil", tapi dipanggil dengan key yang benar).
+    expect(mockedWithLock).toHaveBeenCalledWith(
+      'idempotency:idempotency:test-scope:anonymous:key-2',
+      expect.any(Number),
+      expect.any(Function)
+    );
+    // Pastikan kegagalan Redis GET benar-benar di-log dengan detail
+    // errornya (bukan cuma diam-diam ditelan) — bagian penting dari
+    // filosofi fail-open: gagal tapi tetap KETAHUAN, bukan gagal senyap.
+    expect(logger.warn).toHaveBeenCalledWith(
+      { err: expect.any(Error), cacheKey: 'idempotency:test-scope:anonymous:key-2' },
+      'IdempotencyMiddleware: gagal membaca cache Redis — fail-open'
+    );
   });
 
   it('menjalankan handler (next) di dalam withLock kalau tidak ada cache, dan menyimpan response sukses ke Redis', async () => {
@@ -142,8 +159,13 @@ describe('idempotencyMiddleware', () => {
       expect.stringContaining('idempotency:test-scope:user-1:key-3'),
       JSON.stringify({ statusCode: 201, body: { success: true, message: 'dibuat' } }),
       'EX',
-      expect.any(Number)
+      86400 // 24 jam PERSIS (24*60*60) — bukan cuma "sebuah angka", supaya
+      // mutasi pada rumus TTL-nya (mis. 24*60/60 atau 24/60) ketahuan.
     );
+    // Path sukses (withLock mengembalikan ran:true) TIDAK BOLEH ikut
+    // membalas 409 — 409 cuma untuk kasus request duplikat yang ditolak
+    // withLock (ran:false), lihat test terpisah di bawah.
+    expect(res.status).not.toHaveBeenCalledWith(409);
   });
 
   it('P5 — TIDAK menyimpan ke cache kalau response berstatus error (>= 400) — supaya kegagalan tetap bisa di-retry, bukan di-replay', async () => {
