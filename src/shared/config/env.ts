@@ -146,6 +146,14 @@ export const env = cleanEnv(process.env, {
   // dipakai jauh lebih aman). Frontend menukar kode ini lewat
   // `POST /auth/sso/consume`.
   SSO_FRONTEND_CALLBACK_URL: str({ default: '' }),
+  // Fase 2 (Data retention policy) — akun yang di-soft-delete admin
+  // (`DELETE /users/:id`) otomatis di-erasure PII-nya (scrub
+  // permanen) setelah masa tenggang ini berlalu, lewat
+  // `enforce-data-retention.job.ts`. 30 hari default — cukup untuk
+  // admin "menyesal" & membatalkan (belum ada endpoint undelete di
+  // fase ini, tapi angka ini tetap dipisah jadi env var supaya bisa
+  // disesuaikan kebijakan retensi organisasi tanpa ubah kode).
+  DATA_RETENTION_GRACE_PERIOD_DAYS: num({ default: 30 }),
   // Redis SENGAJA opsional — caching murni optimasi performa, bukan
   // fungsionalitas inti. Kalau kosong/tidak terjangkau, cache
   // otomatis dilewati (langsung baca database), bukan membuat

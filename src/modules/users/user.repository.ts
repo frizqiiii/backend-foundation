@@ -129,4 +129,21 @@ export class UserRepository {
   async delete(id: string): Promise<User> {
     return this.prisma.user.update({ where: { id }, data: { deletedAt: new Date() } });
   }
+
+  /**
+   * Fase 2 (Data retention policy) — akun yang sudah SOFT-DELETE
+   * (`deletedAt` terisi) LEBIH LAMA dari `cutoff`, DAN belum pernah
+   * di-erasure (`erasedAt` masih kosong) — daftar inilah yang
+   * diproses `enforce-data-retention.job.ts` untuk otomatis di-scrub
+   * PII-nya begitu masa tenggang habis. Tanpa `erasedAt IS NULL`,
+   * job ini akan mencoba meng-erasure ulang akun yang sudah pernah
+   * diproses (aman secara logika — `PrivacyService.eraseForUser`
+   * menolak akun yang sudah `erasedAt` — tapi query ini menghindari
+   * pekerjaan sia-sia berulang setiap hari untuk akun yang sama).
+   */
+  async findSoftDeletedPastRetentionPeriod(cutoff: Date): Promise<User[]> {
+    return this.prisma.user.findMany({
+      where: { deletedAt: { lt: cutoff }, erasedAt: null },
+    });
+  }
 }

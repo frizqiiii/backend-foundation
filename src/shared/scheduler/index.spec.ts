@@ -35,9 +35,10 @@ describe('startScheduler', () => {
 
     startScheduler();
 
-    // 5 job terdaftar: cleanup-refresh-tokens, cleanup-blacklisted-tokens,
-    // cleanup-auth-tokens, database-maintenance, verify-audit-chain-integrity.
-    expect(cronSchedule).toHaveBeenCalledTimes(5);
+    // 6 job terdaftar: cleanup-refresh-tokens, cleanup-blacklisted-tokens,
+    // cleanup-auth-tokens, database-maintenance, verify-audit-chain-integrity,
+    // enforce-data-retention.
+    expect(cronSchedule).toHaveBeenCalledTimes(6);
     for (const call of cronSchedule.mock.calls) {
       expect(call[2]).toEqual({ timezone: 'UTC' });
     }
@@ -49,7 +50,7 @@ describe('startScheduler', () => {
 
     startScheduler();
 
-    expect(cronSchedule).toHaveBeenCalledTimes(4);
+    expect(cronSchedule).toHaveBeenCalledTimes(5);
     expect(loggerError).toHaveBeenCalledWith(
       expect.objectContaining({ cronExpression: expect.any(String) }),
       expect.stringContaining('tidak valid')
@@ -62,7 +63,7 @@ describe('startScheduler', () => {
 
     startScheduler();
 
-    expect(loggerInfo).toHaveBeenCalledWith(expect.stringContaining('5 job aktif'));
+    expect(loggerInfo).toHaveBeenCalledWith(expect.stringContaining('6 job aktif'));
   });
 
   it('P5 — callback yang diteruskan ke cron.schedule benar-benar memanggil runJobWithRetry(job) saat dieksekusi', async () => {

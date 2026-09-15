@@ -8,6 +8,10 @@ import { UserService } from './user.service';
 import { UserController } from './user.controller';
 import { AuditRepository } from '../audit/audit.repository';
 import { AuditService } from '../audit/audit.service';
+import { UploadRepository } from '../upload/upload.repository';
+import { PrivacyRepository } from '../privacy/privacy.repository';
+import { PrivacyService } from '../privacy/privacy.service';
+import { PrivacyController } from '../privacy/privacy.controller';
 
 /**
  * Composition root untuk modul `users`.
@@ -21,6 +25,12 @@ const userRepository = new UserRepository(prisma);
 const userService = new UserService(userRepository);
 const auditService = new AuditService(new AuditRepository(prisma));
 const userController = new UserController(userService, auditService);
+
+// Fase 2 (Data retention & GDPR erasure) — lihat `docs/data-retention-policy.md`.
+const privacyRepository = new PrivacyRepository(prisma);
+const uploadRepository = new UploadRepository(prisma);
+const privacyService = new PrivacyService(privacyRepository, userRepository, uploadRepository);
+const privacyController = new PrivacyController(privacyService);
 
 export const userRouter = Router();
 
@@ -51,4 +61,19 @@ userRouter.delete(
   authMiddleware,
   requirePermission('user.manage'),
   asyncHandler(userController.remove)
+);
+
+// Fase 2 (Data retention & GDPR erasure) — self-service, TIDAK PERNAH
+// menerima id dari luar (selalu `req.user`), konfirmasi password
+// wajib (lihat `PrivacyService.requestSelfErasure`).
+userRouter.post('/me/erasure', authMiddleware, asyncHandler(privacyController.eraseSelf));
+
+// Admin-triggered — permission SAMA dengan `remove`/`list` di atas
+// (`user.manage`), dipakai juga oleh job retensi otomatis (lewat
+// `PrivacyService.eraseForUser` langsung, bukan lewat endpoint ini).
+userRouter.post(
+  '/admin/:id/erasure',
+  authMiddleware,
+  requirePermission('user.manage'),
+  asyncHandler(privacyController.eraseByAdmin)
 );

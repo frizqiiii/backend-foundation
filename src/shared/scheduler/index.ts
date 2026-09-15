@@ -7,6 +7,7 @@ import { cleanupExpiredBlacklistedTokensJob } from './jobs/cleanup-expired-black
 import { cleanupExpiredAuthTokensJob } from './jobs/cleanup-expired-auth-tokens.job';
 import { databaseMaintenanceJob } from './jobs/database-maintenance.job';
 import { verifyAuditChainIntegrityJob } from './jobs/verify-audit-chain-integrity.job';
+import { enforceDataRetentionJob } from './jobs/enforce-data-retention.job';
 
 /**
  * Seluruh job terdaftar di satu tempat — menambah job baru cukup
@@ -19,6 +20,7 @@ const registeredJobs: ScheduledJobDefinition[] = [
   cleanupExpiredAuthTokensJob,
   databaseMaintenanceJob,
   verifyAuditChainIntegrityJob,
+  enforceDataRetentionJob,
 ];
 
 /**

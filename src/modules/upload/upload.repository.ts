@@ -26,6 +26,17 @@ export class UploadRepository {
   }
 
   /**
+   * Fase 2 (Data retention/GDPR erasure) — daftar SEMUA file milik
+   * satu user, dipakai `PrivacyService.eraseUserData` untuk menghapus
+   * objek storage-nya SATU PER SATU sebelum baris metadata-nya ikut
+   * dihapus (lihat alasan urutan hapus storage-dulu di
+   * `UploadService.deleteFile`, prinsip yang sama dipakai di sini).
+   */
+  async findByUser(userId: string): Promise<FileUpload[]> {
+    return this.prisma.fileUpload.findMany({ where: { userId } });
+  }
+
+  /**
    * Hapus baris metadata secara FISIK — BEDA dari pola soft delete di
    * `User`/`Product`/`Event`. Alasannya: begitu objek S3-nya benar-benar
    * dihapus (`DeleteObjectCommand` di `UploadService.deleteFile`),

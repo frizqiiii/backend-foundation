@@ -126,6 +126,16 @@ model User {
   // bisa login/direfresh, persis seolah baris ini benar-benar tidak
   // ada lagi.
   deletedAt       DateTime? @map("deleted_at")
+  // Fase 2 (Data retention & GDPR erasure) — BEDA dari `deletedAt`:
+  // `deletedAt` cuma menonaktifkan akun (login ditolak, data PRIBADI
+  // masih utuh di database) — `erasedAt` menandai bahwa PII akun ini
+  // SUDAH BENAR-BENAR di-scrub (`PrivacyService.eraseUserData`, lihat
+  // `docs/data-retention-policy.md`). Nullable — mayoritas akun tidak
+  // pernah melalui proses ini. Dipakai job retensi otomatis
+  // (`enforce-data-retention.job.ts`) untuk tahu akun mana yang SUDAH
+  // di-erasure (jangan diproses ulang) vs yang masih menunggu masa
+  // tenggang habis.
+  erasedAt        DateTime? @map("erased_at")
   // Phase 11 — NULLABLE dengan sengaja (bukan wajib) selama masa
   // transisi: user yang dibuat SEBELUM Phase 11 tidak boleh langsung
   // "hilang" dari isolasi tenant hanya karena kolom ini baru
