@@ -15,6 +15,10 @@ import { ActivityService } from '../activity/activity.service';
 import { MfaRepository } from './mfa.repository';
 import { MfaService } from './mfa.service';
 import { MfaController } from './mfa.controller';
+import { TenantRepository } from '../tenants/tenant.repository';
+import { SsoConnectionRepository, SsoIdentityRepository } from './sso.repository';
+import { SsoConnectionService, SsoService } from './sso.service';
+import { SsoAdminController, SsoController } from './sso.controller';
 
 /**
  * Composition root untuk modul `auth`.
@@ -46,6 +50,25 @@ const oauthService = new OAuthService(userRepository, authRepository, authServic
 const activityService = new ActivityService(new ActivityRepository(prisma));
 const authController = new AuthController(authService, oauthService, auditService, activityService);
 const mfaController = new MfaController(mfaService, userRepository);
+
+// Fase 2 (Enterprise SSO) — `TenantRepository` di-instantiate LAGI di
+// sini (bukan diimpor dari `modules/tenants/tenant.routes.ts`),
+// konsisten dengan pola composition-root manual yang sudah dipakai
+// di seluruh file ini (lihat komentar di atas soal `AuditRepository`/
+// `ActivityRepository`).
+const tenantRepository = new TenantRepository(prisma);
+const ssoConnectionRepository = new SsoConnectionRepository(prisma);
+const ssoIdentityRepository = new SsoIdentityRepository(prisma);
+const ssoConnectionService = new SsoConnectionService(ssoConnectionRepository, tenantRepository);
+const ssoService = new SsoService(
+  ssoConnectionRepository,
+  ssoIdentityRepository,
+  tenantRepository,
+  userRepository,
+  authService
+);
+const ssoAdminController = new SsoAdminController(ssoConnectionService);
+const ssoController = new SsoController(ssoService);
 
 export const authRouter = Router();
 
@@ -99,3 +122,22 @@ authRouter.get(
   requirePermission('audit.read'),
   asyncHandler(authController.loginHistoryForUser)
 );
+
+// Fase 2 (Enterprise SSO) — endpoint admin (konfigurasi) di bawah
+// `sso.manage`, endpoint alur login (redirect + consume) SENGAJA
+// PUBLIK — lihat komentar lengkap di `SsoController`.
+authRouter.put(
+  '/admin/sso/:tenantSlug',
+  authMiddleware,
+  requirePermission('sso.manage'),
+  asyncHandler(ssoAdminController.upsert)
+);
+authRouter.get(
+  '/admin/sso/:tenantSlug',
+  authMiddleware,
+  requirePermission('sso.manage'),
+  asyncHandler(ssoAdminController.get)
+);
+authRouter.get('/sso/:tenantSlug/login', asyncHandler(ssoController.login));
+authRouter.get('/sso/:tenantSlug/callback', asyncHandler(ssoController.callback));
+authRouter.post('/sso/consume', asyncHandler(ssoController.consume));

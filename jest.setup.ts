@@ -42,3 +42,11 @@ process.env.REDIS_CLUSTER_NODES = '';
 process.env.GOOGLE_CLIENT_ID = 'test-google-client-id';
 process.env.GITHUB_CLIENT_ID = 'test-github-client-id';
 process.env.GITHUB_CLIENT_SECRET = 'test-github-client-secret';
+// Fase 2 (Enterprise SSO) — dummy URL HANYA untuk test, pola yang
+// sama dengan GOOGLE_CLIENT_ID/GITHUB_CLIENT_ID di atas: SsoService
+// menolak dengan error jelas kalau nilai ini kosong, jadi test yang
+// menjalankan alur SSO butuh nilai non-kosong di sini walau tidak
+// pernah benar-benar dipakai untuk request jaringan sungguhan (test
+// yang menyentuh SSO memock `openid-client`/`redisClient` sendiri).
+process.env.APP_BASE_URL = 'http://localhost:3000';
+process.env.SSO_FRONTEND_CALLBACK_URL = 'http://localhost:5173/sso/callback';

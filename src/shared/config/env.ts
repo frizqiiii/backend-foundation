@@ -127,6 +127,25 @@ export const env = cleanEnv(process.env, {
   GOOGLE_CLIENT_ID: str({ default: '' }),
   GITHUB_CLIENT_ID: str({ default: '' }),
   GITHUB_CLIENT_SECRET: str({ default: '' }),
+  // Fase 2 (Enterprise SSO, OIDC) — `APP_BASE_URL` adalah base URL
+  // BACKEND ini sendiri (bukan frontend), dipakai untuk menghitung
+  // `redirect_uri` yang dikirim ke IdP saat memulai authorization
+  // request (`{APP_BASE_URL}/api/v1/auth/sso/:tenantSlug/callback`).
+  // WAJIB persis sama dengan redirect URI yang didaftarkan admin di
+  // konsol IdP (Okta/Azure AD/dst) — kalau tidak sama, IdP menolak
+  // request-nya sendiri (bagian standar OIDC, bukan validasi milik
+  // aplikasi ini). Default kosong SENGAJA — kalau belum diisi,
+  // `SsoService` menolak dengan pesan jelas alih-alih menghitung
+  // redirect_uri yang salah/kosong.
+  APP_BASE_URL: str({ default: '' }),
+  // Setelah SSO callback sukses, browser di-redirect ke sini dengan
+  // SATU kode tukar sekali-pakai (`?code=...`) — BUKAN access/refresh
+  // token langsung di URL (token di query string/URL akan tersimpan
+  // di riwayat browser, header Referer, dan log server; kode tukar
+  // sekali-pakai yang hanya valid singkat & langsung dihapus setelah
+  // dipakai jauh lebih aman). Frontend menukar kode ini lewat
+  // `POST /auth/sso/consume`.
+  SSO_FRONTEND_CALLBACK_URL: str({ default: '' }),
   // Redis SENGAJA opsional — caching murni optimasi performa, bukan
   // fungsionalitas inti. Kalau kosong/tidak terjangkau, cache
   // otomatis dilewati (langsung baca database), bukan membuat

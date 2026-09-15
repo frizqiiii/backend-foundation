@@ -61,7 +61,16 @@ export type Permission =
   // (event/product/dst) — ini operasi lintas-tenant tingkat platform,
   // sama sekali bukan sesuatu yang boleh diberikan ke ORGANIZER
   // sekalipun mereka ADMIN di tenant-nya sendiri.
-  | 'tenant.manage';
+  | 'tenant.manage'
+  // Fase 2 (Enterprise SSO) — mengelola konfigurasi SSO (issuer,
+  // client secret) SATU TENANT. SENGAJA permission TERPISAH dari
+  // `tenant.manage` meski saat ini kebetulan sama-sama hanya dipegang
+  // ADMIN platform — mengelola KEBERADAAN tenant dan mengelola
+  // KREDENSIAL SSO-nya adalah dua kapabilitas berbeda sifatnya
+  // (yang kedua jauh lebih sensitif: client secret IdP pihak
+  // ketiga), pola yang sama dengan pemisahan `event.moderate` dari
+  // `event.update` di atas.
+  | 'sso.manage';
 
 /**
  * Pemetaan Role → Permission — jenjang eksplisit yang diminta:
@@ -112,6 +121,7 @@ const ROLE_PERMISSIONS: Record<RoleName, readonly Permission[]> = {
     'dashboard.read',
     'feature-flag.manage',
     'tenant.manage',
+    'sso.manage',
   ],
 };
 

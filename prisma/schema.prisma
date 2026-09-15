@@ -85,6 +85,12 @@ model Tenant {
   events   Event[]
   apiKeys  ApiKey[]
   webhookEndpoints WebhookEndpoint[]
+  // Fase 2 (Enterprise SSO) — satu tenant maksimal satu konfigurasi
+  // SSO aktif untuk iterasi pertama ini (cukup untuk mayoritas
+  // kebutuhan B2B: satu IdP korporat per tenant). Mendukung BEBERAPA
+  // IdP sekaligus per tenant (mis. transisi Okta -> Azure AD) adalah
+  // perluasan terpisah kalau memang dibutuhkan nyata nanti.
+  ssoConnection SsoConnection?
 
   @@index([status])
   @@map("tenants")
@@ -164,9 +170,66 @@ model User {
   mfaRecoveryCodes        MfaRecoveryCode[]
   apiKeys                 ApiKey[]
   webhookEndpoints        WebhookEndpoint[]
+  // Fase 2 (Enterprise SSO) — lihat komentar `SsoIdentity` di bawah.
+  ssoIdentities           SsoIdentity[]
 
   @@index([tenantId])
   @@map("users")
+}
+
+// Fase 2 (Enterprise SSO, OIDC) — konfigurasi Single Sign-On MILIK
+// SATU TENANT, dibuat/diubah admin platform lewat endpoint
+// `sso.manage`. `clientSecret` disimpan TERENKRIPSI (pola identik
+// dengan `User.mfaSecret` — lihat `EncryptionService`), TIDAK PERNAH
+// dikembalikan plaintext lewat API manapun setelah dibuat.
+model SsoConnection {
+  id       String @id @default(uuid())
+  tenantId String @unique @map("tenant_id")
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // URL discovery OIDC standar (mis. "https://accounts.google.com"
+  // atau "https://login.microsoftonline.com/<tenant>/v2.0") — dipakai
+  // `openid-client` untuk otomatis menemukan authorization/token/JWKS
+  // endpoint lewat `/.well-known/openid-configuration`, BUKAN
+  // endpoint-endpoint itu diisi manual satu-satu (rawan salah ketik,
+  // dan endpoint IdP bisa berubah tanpa pemberitahuan).
+  issuerUrl              String  @map("issuer_url")
+  clientId               String  @map("client_id")
+  clientSecretEncrypted  String  @map("client_secret_encrypted")
+  // Domain email yang WAJIB dipakai (mis. "acme.com") — JIT
+  // provisioning HANYA membuat/menautkan user dengan email di domain
+  // ini, mencegah user dari IdP mana pun (identitas TIDAK divalidasi
+  // sebagai member organisasi ini oleh OIDC itu sendiri) mengklaim
+  // tenant yang salah hanya karena berhasil login ke IdP manapun.
+  allowedEmailDomain     String  @map("allowed_email_domain")
+  enabled                Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("sso_connections")
+}
+
+// Tautan antara satu User dan identitas `sub` (subject) miliknya DI
+// SATU KONEKSI SSO tertentu — pola yang SENGAJA identik dengan
+// `OAuthAccount` (identitas provider eksternal disimpan terpisah dari
+// User, direferensikan lewat ID yang PERMANEN menurut provider,
+// bukan email yang bisa berubah). `tenantId` diduplikasi dari
+// `SsoConnection` (bukan cuma lewat relasi) supaya index unik
+// `[tenantId, subject]` tetap valid biarpun `SsoConnection` untuk
+// tenant itu suatu saat dihapus & dibuat ulang (mis. ganti IdP).
+model SsoIdentity {
+  id       String @id @default(uuid())
+  tenantId String @map("tenant_id")
+  subject  String @map("subject")
+  userId   String @map("user_id")
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([tenantId, subject])
+  @@index([userId])
+  @@map("sso_identities")
 }
 
 // Tautan antara satu User dan satu akun provider OAuth eksternal.
