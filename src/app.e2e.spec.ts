@@ -64,6 +64,7 @@ describe('E2E: perjalanan pengguna nyata (Register -> Login -> Create Event -> U
       emailVerifiedAt: new Date(), // langsung terverifikasi untuk skenario ini
       createdAt: new Date(),
       deletedAt: null,
+      erasedAt: null,
       tenantId: null,
       mfaEnabled: false,
       mfaSecret: null,
@@ -94,6 +95,7 @@ describe('E2E: perjalanan pengguna nyata (Register -> Login -> Create Event -> U
       emailVerifiedAt: new Date(),
       createdAt: new Date(),
       deletedAt: null,
+      erasedAt: null,
       tenantId: null,
       mfaEnabled: false,
       mfaSecret: null,

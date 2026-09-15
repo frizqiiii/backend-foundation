@@ -143,6 +143,7 @@ function buildDbUser(overrides: Partial<User> = {}): User {
     emailVerifiedAt: new Date('2026-01-02T00:00:00.000Z'), // terverifikasi secara default
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     deletedAt: null,
+    erasedAt: null,
     tenantId: null,
     mfaEnabled: false,
     mfaSecret: null,
