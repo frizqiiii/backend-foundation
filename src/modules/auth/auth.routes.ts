@@ -122,6 +122,12 @@ authRouter.get(
   requirePermission('audit.read'),
   asyncHandler(authController.loginHistoryForUser)
 );
+authRouter.get(
+  '/admin/audit/integrity',
+  authMiddleware,
+  requirePermission('audit.read'),
+  asyncHandler(authController.verifyAuditIntegrity)
+);
 
 // Fase 2 (Enterprise SSO) — endpoint admin (konfigurasi) di bawah
 // `sso.manage`, endpoint alur login (redirect + consume) SENGAJA

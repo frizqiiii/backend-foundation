@@ -687,6 +687,18 @@ model AuditLog {
   userAgent String?     @map("user_agent")
   createdAt DateTime    @default(now()) @map("created_at")
 
+  // Fase 2 (Kelompok 2 — Audit log immutability). NULLABLE karena
+  // baris yang dibuat SEBELUM migration ini tidak dihitung ulang
+  // (backfill hash historis butuh format serialisasi yang identik
+  // persis antara SQL migration & kode aplikasi — risiko bug format
+  // mismatch dinilai lebih besar daripada manfaatnya untuk iterasi
+  // ini; didokumentasikan apa adanya di `docs/audit-log-immutability.md`).
+  // Baris BARU (dibuat lewat `AuditRepository.create` setelah migration
+  // ini) SELALU terisi keduanya — lihat komentar lengkap alasan &
+  // desain hash-chain di `audit.repository.ts`.
+  hash         String? @map("hash")
+  previousHash String? @map("previous_hash")
+
   // Index komposit `[entity, entityId]` — query paling umum untuk
   // audit log adalah "tampilkan seluruh riwayat perubahan pada
   // Event/Product tertentu", bukan mencari lintas seluruh entity.
@@ -707,6 +719,22 @@ model AuditLog {
   // memakainya.
   @@index([userId, createdAt])
   @@map("audit_logs")
+}
+
+// Fase 2 — satu baris SINGLETON (id selalu 'singleton') yang
+// menyimpan hash TERAKHIR dalam rantai `AuditLog` — dikunci lewat
+// `SELECT ... FOR UPDATE` di setiap `AuditRepository.create` untuk
+// MENYERIALKAN penulisan chain antar request/worker CONCURRENT.
+// Tanpa penguncian ini, dua audit log yang dibuat BERSAMAAN bisa
+// sama-sama membaca `lastHash` yang sama dan menghasilkan chain yang
+// bercabang (dua baris ber-previousHash sama) — merusak jaminan
+// tamper-evidence-nya.
+model AuditChainState {
+  id        String   @id @default("singleton")
+  lastHash  String?  @map("last_hash")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("audit_chain_state")
 }
 
 // Kategori ActivityLog — beda tujuan dari AuditLog: AuditLog fokus ke

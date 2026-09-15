@@ -2,7 +2,11 @@ import { AuditService } from './audit.service';
 import type { AuditRepository } from './audit.repository';
 
 function createMockRepository(): jest.Mocked<AuditRepository> {
-  return { create: jest.fn(), findByUser: jest.fn() } as unknown as jest.Mocked<AuditRepository>;
+  return {
+    create: jest.fn(),
+    findByUser: jest.fn(),
+    verifyChainIntegrity: jest.fn(),
+  } as unknown as jest.Mocked<AuditRepository>;
 }
 
 const actor = { userId: 'user-1', ipAddress: '127.0.0.1', userAgent: 'jest' };
@@ -161,6 +165,26 @@ describe('AuditService', () => {
       await expect(service.getLoginHistory('user-1', { page: 1, limit: 20 })).rejects.toThrow(
         'DB down'
       );
+    });
+  });
+
+  describe('verifyIntegrity', () => {
+    it('meneruskan hasil verifyChainIntegrity dari repository apa adanya', async () => {
+      const repository = createMockRepository();
+      repository.verifyChainIntegrity.mockResolvedValue({ valid: true });
+      const service = new AuditService(repository);
+
+      const result = await service.verifyIntegrity();
+
+      expect(result).toEqual({ valid: true });
+    });
+
+    it('MELEMPAR error apa adanya ketika repository gagal (bukan pola try/catch-lalu-warn seperti method log*)', async () => {
+      const repository = createMockRepository();
+      repository.verifyChainIntegrity.mockRejectedValueOnce(new Error('DB down'));
+      const service = new AuditService(repository);
+
+      await expect(service.verifyIntegrity()).rejects.toThrow('DB down');
     });
   });
 });

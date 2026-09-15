@@ -230,6 +230,23 @@ export class AuthController {
     sendSuccess(res, 200, 'Riwayat login user berhasil diambil', result.data, result.meta);
   };
 
+  /**
+   * Fase 2 (Audit log immutability) — verifikasi ON-DEMAND (di luar
+   * job terjadwal harian) integritas hash chain audit log. Operasi
+   * BERAT (membaca & meng-hash ulang SEMUA baris berhash) — sengaja
+   * di belakang permission `audit.read` yang sama dengan
+   * `loginHistoryForUser`, bukan endpoint publik.
+   */
+  verifyAuditIntegrity = async (_req: Request, res: Response): Promise<void> => {
+    const result = await this.auditService.verifyIntegrity();
+    sendSuccess(
+      res,
+      200,
+      result.valid ? 'Hash chain audit log valid' : 'Hash chain audit log TERDETEKSI TIDAK VALID',
+      result
+    );
+  };
+
   verifyEmail = async (req: Request, res: Response): Promise<void> => {
     const input = verifyEmailSchema.parse(req.body);
     await this.authService.verifyEmail(input);

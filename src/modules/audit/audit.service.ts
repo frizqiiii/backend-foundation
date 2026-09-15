@@ -191,4 +191,21 @@ export class AuditService {
       },
     };
   }
+
+  /**
+   * Verifikasi integritas SELURUH hash chain audit log (Fase 2 —
+   * immutability) — dipanggil job terjadwal (lihat
+   * `verify-audit-chain-integrity.job.ts`) MAUPUN endpoint admin
+   * on-demand (`GET /auth/admin/audit/integrity`). SENGAJA TIDAK
+   * memakai pola try/catch-lalu-warn seperti method `log*` di atas —
+   * sama seperti `getLoginHistory`, ini PEMBACAAN yang hasilnya
+   * langsung relevan bagi pemanggilnya; kegagalan (baik error teknis
+   * maupun chain yang TERBUKTI rusak) harus terlihat jelas, bukan
+   * ditelan diam-diam.
+   */
+  async verifyIntegrity(): Promise<
+    { valid: true } | { valid: false; brokenAt: { id: string; reason: string } }
+  > {
+    return this.auditRepository.verifyChainIntegrity();
+  }
 }
