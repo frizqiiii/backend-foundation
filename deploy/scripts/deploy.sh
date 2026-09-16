@@ -54,6 +54,19 @@ git pull --ff-only
 npm ci
 npx prisma generate
 
+# Fase 2 (Secrets Management, item 2.4) — OPSIONAL, hanya jalan kalau
+# VAULT_ADDR diisi (backward compatible untuk deployment yang belum
+# pakai Vault, masih baca `.env` manual seperti biasa). Lihat
+# docs/secrets-management.md untuk desain lengkapnya. SENGAJA
+# dijalankan SEBELUM `pm2 reload` di langkah [5/6] — kalau sync gagal
+# (exit code != 0), `set -e` di awal script ini (lihat baris atas)
+# akan menghentikan deploy SEBELUM instance baru sempat reload dengan
+# `.env` yang mungkin sudah basi/tidak lengkap.
+if [ -n "${VAULT_ADDR:-}" ]; then
+  echo "[3b/6] Sinkronisasi secret dari Vault..."
+  node scripts/sync-secrets-from-vault.js
+fi
+
 echo "[4/6] Menjalankan migration & build..."
 npx prisma migrate deploy
 npm run build

@@ -34,7 +34,8 @@
     "perf:spike": "k6 run performance-tests/spike-test.js",
     "perf:soak": "k6 run performance-tests/soak-test.js",
     "prepare": "husky",
-    "audit:check": "node scripts/check-npm-audit.js"
+    "audit:check": "node scripts/check-npm-audit.js",
+    "secrets:sync": "node scripts/sync-secrets-from-vault.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.637.0",
@@ -65,6 +66,7 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.3.0",
     "node-cron": "^4.6.0",
+    "node-vault": "^0.12.0",
     "openid-client": "^5.7.1",
     "otplib": "^12.0.1",
     "pdfkit": "^0.19.1",
