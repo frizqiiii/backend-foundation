@@ -118,17 +118,77 @@ jobs:
         uses: actions/dependency-review-action@v4
 
   docker-build-and-scan:
-    name: Docker Build + Trivy Scan
+    name: Docker Build + SBOM + Sign + Trivy Scan
     runs-on: ubuntu-latest
     needs: [lint-and-format, typecheck-and-build, test]
+    # `packages: write` — push image ke GHCR (dibutuhkan SEBELUM bisa
+    # di-sign; cosign menandatangani referensi image di registry, beda
+    # dari `cosign sign-blob` yang menandatangani file lepas).
+    # `id-token: write` — token OIDC dari GitHub Actions sendiri,
+    # dipakai cosign untuk KEYLESS signing (Sigstore Fulcio/Rekor) —
+    # TIDAK ADA private key yang perlu disimpan sebagai secret sama
+    # sekali, identitas penandatangan = identitas workflow ini sendiri
+    # (bisa diverifikasi siapa pun lewat transparency log publik Rekor).
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
-      - name: Build image
-        run: docker build -t backend-foundation:${{ github.sha }} .
+
+      - name: Log in ke GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
+
       - name: "Trivy scan (gate - multer v2 + npm/corepack removal applied, IMPLEMENTED not yet VERIFIED on real Actions run, revert exit-code to 0 if other findings remain)"
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: backend-foundation:${{ github.sha }}
+          image-ref: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
           format: table
           severity: CRITICAL,HIGH
           exit-code: '1'
+
+      # SBOM (item 2.5) — syft membaca LANGSUNG dari image yang baru
+      # di-push (bukan dari source code di runner) supaya SBOM
+      # mencerminkan PERSIS apa yang benar-benar ada di dalam image
+      # (termasuk dependency sistem Alpine, bukan cuma npm package).
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          syft "ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}" \
+            -o cyclonedx-json=sbom.cyclonedx.json \
+            -o table
+
+      - name: Upload SBOM sebagai artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom.cyclonedx.json
+          retention-days: 90
+
+      # Image signing + SBOM attestation (item 2.5) — KEYLESS, lihat
+      # komentar `permissions.id-token` di atas untuk alasan lengkap.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image (keyless)
+        run: cosign sign --yes "ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}"
+
+      - name: Attest SBOM ke image (keyless)
+        run: |
+          cosign attest --yes --type cyclonedx \
+            --predicate sbom.cyclonedx.json \
+            "ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}"
