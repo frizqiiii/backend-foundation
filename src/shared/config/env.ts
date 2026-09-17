@@ -154,6 +154,12 @@ export const env = cleanEnv(process.env, {
   // fase ini, tapi angka ini tetap dipisah jadi env var supaya bisa
   // disesuaikan kebijakan retensi organisasi tanpa ubah kode).
   DATA_RETENTION_GRACE_PERIOD_DAYS: num({ default: 30 }),
+  // Fase 2 (item 2.10 — API Gateway edge) — kuota request PER API KEY
+  // (bukan per-IP), khusus traffic partner/developer eksternal. Lihat
+  // `api-key-gateway.ts`. 300/menit = 5 request/detik rata-rata,
+  // longgar untuk integrasi wajar tapi tetap membatasi runaway
+  // script/bug di sisi partner.
+  API_KEY_GATEWAY_RATE_LIMIT_PER_MINUTE: num({ default: 300 }),
   // Redis SENGAJA opsional — caching murni optimasi performa, bukan
   // fungsionalitas inti. Kalau kosong/tidak terjangkau, cache
   // otomatis dilewati (langsung baca database), bukan membuat

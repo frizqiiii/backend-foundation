@@ -83,3 +83,21 @@ export const httpErrorsTotal = new Counter({
   labelNames: ['method', 'route', 'status_code'] as const,
   registers: [metricsRegistry],
 });
+
+/**
+ * Fase 2 (item 2.10 — API Gateway edge) — volume traffic yang masuk
+ * lewat API key (partner/developer eksternal), TERPISAH dari
+ * `httpRequestsTotal` umum. Label `outcome` membedakan: `allowed`
+ * (lolos kuota normal), `rejected` (kena kuota
+ * `API_KEY_GATEWAY_RATE_LIMIT_PER_MINUTE`), `allowed_no_redis`/
+ * `allowed_redis_error` (fail-open — kuota tidak sempat ditegakkan).
+ * Berguna untuk capacity planning & percakapan dukungan partner
+ * ("berapa banyak request partner X bulan ini") tanpa perlu query
+ * log mentah.
+ */
+export const partnerApiRequestsTotal = new Counter({
+  name: 'partner_api_requests_total',
+  help: 'Total request yang diautentikasi lewat API key (traffic partner/developer eksternal)',
+  labelNames: ['outcome'] as const,
+  registers: [metricsRegistry],
+});
