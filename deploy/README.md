@@ -173,14 +173,21 @@ setiap kali tag versi baru di-push (`git tag v1.4.0 && git push --tags`).
 Butuh 3 repository secret: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` (private
 key SSH), dan `VPS_APP_PATH` (mis. `/var/www/backend-foundation`).
 
-## 8. Blue/Green Deployment (Persiapan)
+## 8. Blue/Green Deployment
 
-Konfigurasi dasar (upstream Nginx dengan 2 port + prosedur switch)
-tersedia di `deploy/nginx/backend-foundation.blue-green.conf.example`
-— **belum dipasang otomatis**, karena mengaktifkannya adalah keputusan
-operasional (butuh kapasitas server 2x lipat selama masa transisi).
-Baca komentar di file itu untuk prosedur lengkapnya sebelum
-mengaktifkan di production.
+Diimplementasikan penuh & terverifikasi (drill nyata: nginx + PM2
+sungguhan, traffic HTTP kontinu, switch dua arah, zero-downtime
+terbukti) — lihat `docs/blue-green-deployment.md` untuk hasil
+lengkap & cara pasang. Ringkasan file:
+- `deploy/pm2/ecosystem.green.config.js` — instance kedua ("green").
+- `deploy/scripts/deploy-blue-green.sh` — otomatisasi switch, dipakai
+  MENGGANTIKAN `deploy.sh` biasa kalau memilih strategi ini.
+- `deploy/nginx/backend-foundation.blue-green.conf.example` —
+  konfigurasi upstream yang dibutuhkan (pasang sekali).
+
+**Tetap opsional/opt-in** — butuh kapasitas server 2x lipat selama
+masa transisi, keputusan operasional yang harus sadar diambil, bukan
+otomatis terpasang lewat `deploy.sh` reguler.
 
 ## 9. Checklist Keamanan Sebelum Go-Live
 

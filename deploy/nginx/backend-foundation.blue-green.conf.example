@@ -33,6 +33,18 @@
 #      idle) bisa di-deploy versi berikutnya, siap jadi target switch
 #      selanjutnya — bergantian, bukan searah.
 
+# CATATAN (item 2.8, Kelompok 2): prosedur manual di atas SEKARANG
+# DIOTOMATISASI oleh deploy/scripts/deploy-blue-green.sh — script itu
+# melakukan PERSIS langkah 1-4 di atas secara otomatis (deteksi warna
+# aktif, deploy ke standby, health-check, swap baris `backup`, reload
+# nginx, verifikasi). Lihat docs/blue-green-deployment.md untuk hasil
+# verifikasi nyata (drill dengan nginx + PM2 sungguhan, traffic HTTP
+# kontinu, switch dua arah terbukti zero-downtime). File ini TETAP
+# relevan sebagai REFERENSI konfigurasi upstream yang dibutuhkan
+# script tersebut — pasang SEKALI (ganti proxy_pass di
+# backend-foundation.conf seperti dijelaskan di bawah), baru
+# deploy-blue-green.sh bisa dipakai berulang.
+
 upstream backend_blue_green {
   # PENTING: keyword `backup` membuat server itu HANYA menerima
   # trafik kalau server non-backup di atasnya SEDANG DOWN — ini BUKAN
