@@ -1,0 +1,65 @@
+name: Mutation Testing (mingguan)
+
+# Fase 3 (item 3.5) — `npx stryker run` PENUH sebagai job terjadwal
+# TERPISAH dari CI utama (`ci.yml`).
+#
+# NON-BLOCKING secara desain: workflow ini hanya berjalan terjadwal
+# (dan manual lewat "Run workflow"), TIDAK dipicu oleh push/pull
+# request, jadi tidak pernah menahan merge atau memperlambat PR.
+# Run penuh memakan ~125 menit di mesin lokal — terlalu lama untuk
+# jalur PR. Kalau skor turun di bawah `thresholds.break` di
+# `stryker.conf.json` (sekarang 50), run ini gagal (merah) dan itu
+# sinyalnya; selain itu hasilnya untuk dipantau tren dan survivors-nya.
+#
+# Tidak butuh service container: seluruh suite jest yang dijalankan
+# Stryker memakai mock Prisma/Redis (`jest.setup.ts` menimpa
+# DATABASE_URL ke dummy), terbukti jalan tanpa Postgres/Redis.
+
+on:
+  schedule:
+    # Minggu 18:00 UTC = Senin 01:00 WIB — di luar jam kerja.
+    - cron: '0 18 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Jangan menumpuk dua run penuh sekaligus (satu run bisa berjam-jam).
+concurrency:
+  group: mutation-testing
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  mutation:
+    name: Stryker (full)
+    runs-on: ubuntu-latest
+    # Runner GitHub (2 vCPU) kemungkinan lebih lambat daripada mesin
+    # lokal — batas ini sengaja longgar. Setelah run pertama, sesuaikan
+    # dengan durasi nyata (lihat "Done in ..." di log Stryker).
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Stryker (full run)
+        run: npx stryker run
+      - name: Ringkasan hasil
+        # Tetap dijalankan walau Stryker gagal (mis. skor di bawah batas)
+        # supaya angka & survivors tetap terlihat di halaman run.
+        if: always()
+        run: node scripts/mutation-summary.js >> "$GITHUB_STEP_SUMMARY"
+      - name: Unggah laporan
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: reports/mutation/
+          if-no-files-found: warn
+          retention-days: 30
