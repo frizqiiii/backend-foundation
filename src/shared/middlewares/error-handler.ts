@@ -4,6 +4,8 @@ import { MulterError } from 'multer';
 import { HttpError } from '../utils/http-error';
 import { env } from '../config/env';
 import { logger } from '../logger';
+import { getRequestLocale } from '../i18n/locale';
+import { translateFieldErrors, translateMessage } from '../i18n/translate';
 
 /**
  * Global error handler — satu-satunya tempat yang membentuk response
@@ -16,17 +18,23 @@ import { logger } from '../logger';
  * tanpa perlu menebak dari HTTP status code semata.
  */
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction): void {
+  // Fase 2 (item 2.13 — i18n): `message` dan pesan validasi diterjemahkan
+  // sesuai `Accept-Language` (default `id` = teks sumber apa adanya).
+  const locale = getRequestLocale(req, res);
+
   if (err instanceof ZodError) {
     res.status(422).json({
       success: false,
       message: 'Validation failed',
-      errors: err.flatten().fieldErrors,
+      errors: translateFieldErrors(err.flatten().fieldErrors, locale),
     });
     return;
   }
 
   if (err instanceof HttpError) {
-    res.status(err.statusCode).json({ success: false, message: err.message });
+    res
+      .status(err.statusCode)
+      .json({ success: false, message: translateMessage(err.message, locale) });
     return;
   }
 
@@ -42,7 +50,7 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
       err.code === 'LIMIT_FILE_SIZE'
         ? 'Ukuran file melebihi batas maksimal yang diizinkan'
         : `Upload gagal: ${err.message}`;
-    res.status(400).json({ success: false, message });
+    res.status(400).json({ success: false, message: translateMessage(message, locale) });
     return;
   }
 

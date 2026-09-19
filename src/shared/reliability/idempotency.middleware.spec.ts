@@ -236,4 +236,21 @@ describe('idempotencyMiddleware', () => {
       })
     );
   });
+
+  it('item 2.13 — pesan 409 diterjemahkan sesuai locale response (en), default id tidak berubah', async () => {
+    mockRedisClientValue!.get.mockResolvedValue(null);
+    mockedWithLock.mockResolvedValue({ ran: false });
+
+    const req = createMockRequest({ 'idempotency-key': 'key-6' });
+    const res = createMockResponse();
+    (res as unknown as { locals: Record<string, unknown> }).locals = { locale: 'en' };
+
+    await middleware(req, res, jest.fn() as NextFunction);
+
+    expect(res.json).toHaveBeenCalledWith({
+      success: false,
+      message:
+        'A request with the same Idempotency-Key is already being processed. Try again shortly.',
+    });
+  });
 });

@@ -142,4 +142,101 @@ describe('errorHandler', () => {
       }
     });
   });
+  describe('item 2.13 — i18n pesan error mengikuti Accept-Language', () => {
+    function reqWith(acceptLanguage?: string): Request {
+      return {
+        method: 'GET',
+        originalUrl: '/test',
+        headers: acceptLanguage ? { 'accept-language': acceptLanguage } : {},
+      } as unknown as Request;
+    }
+
+    it('HttpError: default (tanpa header) tetap Indonesia — perilaku lama tidak berubah', () => {
+      const res = createMockResponse();
+
+      errorHandler(new NotFoundError('Produk tidak ditemukan'), reqWith(), res, next);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'Produk tidak ditemukan' });
+    });
+
+    it('HttpError: Accept-Language en -> pesan berbahasa Inggris, status code TIDAK berubah', () => {
+      const res = createMockResponse();
+
+      errorHandler(
+        new NotFoundError('Produk tidak ditemukan'),
+        reqWith('en-US,en;q=0.9'),
+        res,
+        next
+      );
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'Product not found' });
+    });
+
+    it('HttpError dengan pesan dinamis: nilainya ikut terbawa ke terjemahan', () => {
+      const res = createMockResponse();
+
+      errorHandler(
+        new TooManyRequestsError('Terlalu banyak percobaan login gagal. Coba lagi dalam 12 menit.'),
+        reqWith('en'),
+        res,
+        next
+      );
+
+      expect(res.status).toHaveBeenCalledWith(429);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'Too many failed login attempts. Try again in 12 minutes.',
+      });
+    });
+
+    it('HttpError dengan pesan yang tidak ada di katalog: fallback ke teks asli, bukan error', () => {
+      const res = createMockResponse();
+
+      errorHandler(new BadRequestError('Pesan yang belum diterjemahkan'), reqWith('en'), res, next);
+
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'Pesan yang belum diterjemahkan',
+      });
+    });
+
+    it('ZodError: pesan per-field diterjemahkan, struktur `errors` dan `message` tetap', () => {
+      const schema = z.object({ email: z.string().email('Format email tidak valid') });
+      const result = schema.safeParse({ email: 'bukan-email' });
+      const zodError = (result as { success: false; error: ZodError }).error;
+      const res = createMockResponse();
+
+      errorHandler(zodError, reqWith('en'), res, next);
+
+      expect(res.status).toHaveBeenCalledWith(422);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'Validation failed',
+        errors: { email: ['Invalid email format'] },
+      });
+    });
+
+    it('MulterError LIMIT_FILE_SIZE: diterjemahkan', () => {
+      const res = createMockResponse();
+
+      errorHandler(new MulterError('LIMIT_FILE_SIZE'), reqWith('en'), res, next);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'File size exceeds the maximum allowed limit',
+      });
+    });
+
+    it('res.locals.locale (dari localeMiddleware) menang atas header mentah', () => {
+      const res = createMockResponse();
+      (res as unknown as { locals: Record<string, unknown> }).locals = { locale: 'en' };
+
+      errorHandler(new NotFoundError('Produk tidak ditemukan'), reqWith('id'), res, next);
+
+      expect(res.json).toHaveBeenCalledWith({ success: false, message: 'Product not found' });
+    });
+  });
 });

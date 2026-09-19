@@ -39,7 +39,10 @@ export const openApiSpec = {
     description:
       'Dokumentasi endpoint modul Auth, Events, dan Products. ' +
       'Semua endpoint terproteksi membutuhkan header ' +
-      '`Authorization: Bearer <accessToken>` (lihat skema `bearerAuth`).',
+      '`Authorization: Bearer <accessToken>` (lihat skema `bearerAuth`). ' +
+      'Field `message` pada respons (sukses, error, dan pesan validasi) mengikuti header ' +
+      '`Accept-Language`: `id` (default) atau `en`; bahasa yang dipakai dikembalikan di header ' +
+      '`Content-Language`. Lihat docs/i18n.md.',
   },
   servers: [{ url: '/api/v1', description: 'Base path seluruh endpoint (versi 1)' }],
   components: {

@@ -23,6 +23,7 @@ import { exportRouter } from './modules/exports/export.routes';
 import { reportingRouter } from './modules/reporting/reporting.routes';
 import { analyticsRouter } from './modules/analytics/analytics.routes';
 import { correlationIdMiddleware } from './shared/observability/correlation-id.middleware';
+import { localeMiddleware } from './shared/i18n/locale.middleware';
 import { getCorrelationId } from './shared/observability/correlation-id';
 import { tenantMiddleware } from './shared/tenant/tenant.middleware';
 // Side-effect import (Phase 10 upgrade) — mendaftarkan gauge
@@ -274,6 +275,10 @@ export function createApp(): Application {
   // sama ini sebagai `req.id`, jadi satu request bisa ditelusuri utuh
   // lewat SATU nilai di seluruh baris log yang dihasilkannya.
   app.use(correlationIdMiddleware);
+  // Fase 2 (item 2.13 — i18n): locale dari `Accept-Language`, dipasang
+  // SEBELUM `cors`/`verifyRequestOrigin`/`tenantMiddleware` supaya error
+  // yang dilempar middleware-middleware itu pun ikut diterjemahkan.
+  app.use(localeMiddleware);
 
   // CORS whitelist ketat — HANYA origin yang eksplisit terdaftar di
   // CORS_ALLOWED_ORIGINS yang diizinkan, BUKAN wildcard "*". Request

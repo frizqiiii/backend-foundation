@@ -2,6 +2,8 @@ import type { Request, Response, NextFunction } from 'express';
 import { redisClient } from '../config/redis';
 import { withLock } from '../concurrency/distributed-lock';
 import { logger } from '../logger';
+import { getResponseLocale } from '../i18n/locale';
+import { translateMessage } from '../i18n/translate';
 
 /**
  * Idempotency Key + Request Deduplication (Phase 18 — Enterprise
@@ -125,7 +127,11 @@ export function idempotencyMiddleware(
     if (!lockResult.ran) {
       res.status(409).json({
         success: false,
-        message: 'Request dengan Idempotency-Key yang sama sedang diproses. Coba lagi sesaat lagi.',
+        // Fase 2 (item 2.13 — i18n): diterjemahkan sesuai locale request.
+        message: translateMessage(
+          'Request dengan Idempotency-Key yang sama sedang diproses. Coba lagi sesaat lagi.',
+          getResponseLocale(res)
+        ),
       });
     }
   };

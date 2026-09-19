@@ -33,6 +33,10 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   plan, dan endpoint `PATCH /api/v1/tenants/:id/plan` (butuh `tenant.manage`) —
   `docs/rate-limit-tiers.md`. Migration `20260919000000_tenant_plan_rate_limit_tiers`.
 - **Dokumentasi strategi versioning API** (item 2.12) — `docs/api-versioning.md`.
+- **i18n pesan respons API** (item 2.13): field `message` (error, sukses, dan pesan validasi) mengikuti
+  `Accept-Language` — `id` (default, perilaku lama tidak berubah) dan `en`. Respons kini membawa
+  `Content-Language` dan `Vary: Accept-Language`. Katalog terjemahan dijaga oleh test kelengkapan yang
+  gagal kalau ada pesan tanpa terjemahan — `docs/i18n.md`.
 - **Workflow `mutation.yml`**: mutation testing penuh mingguan, terpisah dari CI utama
   dan tidak memblokir PR (item 3.5).
 - `CODEOWNERS` (item 3.2) dan berkas `CHANGELOG.md` ini (item 3.4).

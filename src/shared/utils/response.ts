@@ -1,4 +1,6 @@
 import type { Response } from 'express';
+import { getResponseLocale } from '../i18n/locale';
+import { translateMessage } from '../i18n/translate';
 
 /**
  * Amplop (envelope) response sukses yang seragam di SELURUH endpoint —
@@ -27,7 +29,13 @@ export function sendSuccess<T>(
   data: T,
   meta?: Record<string, unknown>
 ): void {
-  const body: SuccessResponseBody<T> = { success: true, message, data };
+  // Fase 2 (item 2.13): `message` diterjemahkan sesuai locale request
+  // (default `id` = teks sumber apa adanya).
+  const body: SuccessResponseBody<T> = {
+    success: true,
+    message: translateMessage(message, getResponseLocale(res)),
+    data,
+  };
   if (meta) {
     body.meta = meta;
   }
