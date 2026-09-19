@@ -5,12 +5,18 @@ const jwtVerifyMock = jest.fn();
 const isBlacklistedMock = jest.fn();
 const apiKeyAuthenticateMock = jest.fn();
 const findByIdMock = jest.fn();
+const enforceGatewayMock = jest.fn();
+const resolveTenantPlanSafeMock = jest.fn();
 
 jest.mock('../utils/jwt', () => ({ jwtHelper: { verify: jwtVerifyMock } }));
 jest.mock('../utils/token-blacklist', () => ({
   tokenBlacklist: { isBlacklisted: isBlacklistedMock },
 }));
 jest.mock('../config/database', () => ({ prisma: {} }));
+jest.mock('../security/api-key-gateway', () => ({
+  enforcePartnerApiGatewayLimit: enforceGatewayMock,
+}));
+jest.mock('../tenant/tenant-plan', () => ({ resolveTenantPlanSafe: resolveTenantPlanSafeMock }));
 jest.mock('../../modules/api-keys/api-key.service', () => ({
   ApiKeyService: jest.fn().mockImplementation(() => ({ authenticate: apiKeyAuthenticateMock })),
 }));
@@ -30,6 +36,8 @@ describe('authMiddleware', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     isBlacklistedMock.mockResolvedValue(false);
+    enforceGatewayMock.mockResolvedValue(undefined);
+    resolveTenantPlanSafeMock.mockResolvedValue(null);
   });
 
   it('melempar UnauthorizedError kalau header Authorization tidak ada', async () => {
@@ -84,6 +92,43 @@ describe('authMiddleware', () => {
       jti: 'api-key:key-1',
       apiKeyScopes: ['event.read'],
     });
+  });
+
+  it('item 2.11 — kuota gateway dipilih dari plan TENANT pemilik key (tenantId dari authenticate -> resolveTenantPlanSafe -> enforcePartnerApiGatewayLimit)', async () => {
+    apiKeyAuthenticateMock.mockResolvedValue({
+      apiKeyId: 'key-1',
+      userId: 'user-1',
+      tenantId: 'tenant-acme',
+      scopes: [],
+      expiresAt: null,
+    });
+    resolveTenantPlanSafeMock.mockResolvedValue('FREE');
+    findByIdMock.mockResolvedValue({ id: 'user-1', email: 'budi@example.com', role: 'USER' });
+
+    const next = jest.fn() as NextFunction;
+    await authMiddleware(createMockReq('Bearer bfk_abc123'), {} as Response, next);
+
+    expect(resolveTenantPlanSafeMock).toHaveBeenCalledWith('tenant-acme');
+    expect(enforceGatewayMock).toHaveBeenCalledWith('key-1', 'FREE');
+    expect(next).toHaveBeenCalledWith();
+  });
+
+  it('item 2.11 — kuota gateway TERLAMPAUI -> error diteruskan ke next() dan pemilik key TIDAK di-query (request ditolak sedini mungkin)', async () => {
+    apiKeyAuthenticateMock.mockResolvedValue({
+      apiKeyId: 'key-1',
+      userId: 'user-1',
+      tenantId: null,
+      scopes: [],
+      expiresAt: null,
+    });
+    const quotaError = new Error('Kuota API key terlampaui');
+    enforceGatewayMock.mockRejectedValue(quotaError);
+
+    const next = jest.fn() as NextFunction;
+    await authMiddleware(createMockReq('Bearer bfk_abc123'), {} as Response, next);
+
+    expect(next).toHaveBeenCalledWith(quotaError);
+    expect(findByIdMock).not.toHaveBeenCalled();
   });
 
   it('meneruskan NotFoundError kalau pemilik API key sudah tidak ada', async () => {

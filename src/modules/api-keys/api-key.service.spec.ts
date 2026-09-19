@@ -114,6 +114,7 @@ describe('ApiKeyService', () => {
       expect(result).toEqual({
         apiKeyId: storedApiKey.id,
         userId: storedApiKey.userId,
+        tenantId: storedApiKey.tenantId,
         scopes: storedApiKey.scopes,
         expiresAt: null,
       });
@@ -127,9 +128,18 @@ describe('ApiKeyService', () => {
       await expect(apiKeyService.authenticate('bfk_x')).resolves.toEqual({
         apiKeyId: storedApiKey.id,
         userId: storedApiKey.userId,
+        tenantId: storedApiKey.tenantId,
         scopes: storedApiKey.scopes,
         expiresAt: null,
       });
+    });
+
+    it('item 2.11 — mengembalikan tenantId pemilik key (dipakai gateway untuk memilih kuota per plan)', async () => {
+      apiKeyRepository.findByHash.mockResolvedValue({ ...storedApiKey, tenantId: 'tenant-acme' });
+
+      const result = await apiKeyService.authenticate('bfk_x');
+
+      expect(result.tenantId).toBe('tenant-acme');
     });
   });
 

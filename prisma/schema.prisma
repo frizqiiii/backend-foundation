@@ -45,6 +45,18 @@ enum TenantStatus {
   SUSPENDED
 }
 
+// Fase 2 (item 2.11 — rate limit per-tier/plan) — paket layanan tenant.
+// Menentukan KUOTA rate limit tenant (per-tenant, per-15-menit) dan kuota
+// API key partner (per-key, per-menit) — angka konkretnya ada di
+// `shared/security/rate-limit-tiers.ts`, BUKAN di database, supaya
+// menyesuaikan angka tidak butuh migration. Tambah member baru di sini
+// DAN di `TenantPlanName`/`RATE_LIMIT_TIERS` di file itu.
+enum TenantPlan {
+  FREE
+  PRO
+  ENTERPRISE
+}
+
 // Tenant — akar dari model multi-tenancy (Phase 11). Setiap baris di
 // sini merepresentasikan satu organisasi/pelanggan yang datanya harus
 // terisolasi dari tenant lain.
@@ -74,6 +86,13 @@ model Tenant {
   slug      String       @unique
   name      String
   status    TenantStatus @default(ACTIVE)
+  // Default `PRO` (BUKAN `FREE`) SENGAJA: tier PRO memakai angka yang
+  // PERSIS sama dengan limit flat sebelum item 2.11 (1000 request/15
+  // menit per tenant, `API_KEY_GATEWAY_RATE_LIMIT_PER_MINUTE` per API
+  // key), jadi SEMUA tenant yang sudah ada tetap berperilaku identik
+  // setelah migration ini — tidak ada tenant yang tiba-tiba lebih
+  // ketat. Tenant baru yang ingin `FREE` dibuat dengan `plan` eksplisit.
+  plan      TenantPlan   @default(PRO)
   createdAt DateTime     @default(now()) @map("created_at")
   updatedAt DateTime     @updatedAt @map("updated_at")
   // Soft delete — konsisten dengan konvensi `User.deletedAt`/

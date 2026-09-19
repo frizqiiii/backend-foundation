@@ -38,6 +38,7 @@ import { errorHandler } from './shared/middlewares/error-handler';
 import { sanitizeInput } from './shared/middlewares/sanitize-input.middleware';
 import { verifyRequestOrigin } from './shared/middlewares/csrf-protection.middleware';
 import { createRateLimiter } from './shared/security/rate-limiter';
+import { getRateLimitTier } from './shared/security/rate-limit-tiers';
 import { getTenantContext } from './shared/tenant/tenant-context';
 import { openApiSpec } from './docs/openapi';
 import { env } from './shared/config/env';
@@ -126,7 +127,12 @@ const generalRateLimiter = createRateLimiter({
  */
 const tenantRateLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
-  max: 1000,
+  // Fase 2 (item 2.11) — kuota mengikuti plan tenant aktif (FREE/PRO/
+  // ENTERPRISE, lihat `rate-limit-tiers.ts`), dievaluasi per-request.
+  // Tier PRO (default, dan fallback kalau plan tidak diketahui) =
+  // 1000, angka flat LAMA — perilaku tenant yang sudah ada tidak
+  // berubah.
+  max: () => getRateLimitTier(getTenantContext().tenantPlan).tenantRequestsPer15Min,
   message: 'Tenant ini telah melebihi kuota permintaan. Coba lagi dalam beberapa menit.',
   keyPrefix: 'tenant',
   keyGenerator: () => getTenantContext().tenantId ?? 'no-tenant',

@@ -58,13 +58,12 @@ Plus 15/15 unit test (mocked) mencakup: window reset sekali di awal
 (bukan bergeser terus), persis di batas vs melewati batas, fail-open
 saat Redis error DAN saat Redis tidak dikonfigurasi sama sekali.
 
-## Hubungan dengan item 2.11 (Rate limit per-tier/plan)
+## Hubungan dengan item 2.11 (Rate limit per-tier/plan) — SUDAH dikerjakan
 
-Modul ini SENGAJA baru menegakkan SATU angka limit statis untuk
-SEMUA API key — item 2.11 (belum dikerjakan) akan membangun DI ATAS
-titik terpusat yang sama ini, menambahkan limit BERBEDA per tier/plan
-API key (mis. `ApiKey.tier` atau field serupa), bukan mengulang dari
-nol.
+Kuota per API key sekarang bergantung pada plan tenant pemilik key
+(`FREE`/`PRO`/`ENTERPRISE`), bukan satu angka statis. Yang dipakai adalah
+`Tenant.plan` (bukan `ApiKey.tier` seperti sempat dipertimbangkan di draf awal
+dokumen ini) — alasan dan angka lengkapnya di `docs/rate-limit-tiers.md`.
 
 ## Yang belum tercakup (scope sadar)
 

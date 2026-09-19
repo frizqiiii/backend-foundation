@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Prisma, PrismaClient } from '@prisma/client';
+import type { TenantPlanName } from '../security/rate-limit-tiers';
 
 /**
  * Tenant Context — state tenant yang aktif untuk request yang sedang
@@ -34,6 +35,17 @@ export interface TenantContextValue {
    * `tenant.middleware.ts`). */
   tenantId: string | null;
   tenantSlug: string | null;
+  /**
+   * Fase 2 (item 2.11 — rate limit per-tier/plan) — paket layanan
+   * tenant aktif, dipakai `tenantRateLimiter` (`app.ts`) untuk memilih
+   * kuota per-tenant. SENGAJA OPSIONAL (`?`), BEDA dari `db` di bawah
+   * yang wajib: menambahkan field WAJIB ke interface ini di Fase 4
+   * (RLS) memecahkan seluruh pemanggil lama (4 file spec yang
+   * membangun objek ini harus ikut diubah). Opsional = pemanggil lama
+   * tetap valid dan `undefined` jatuh ke tier default (lihat
+   * `getRateLimitTier`).
+   */
+  tenantPlan?: TenantPlanName | null;
   /**
    * Prisma transaction client yang sudah di-set `app.tenant_id` untuk
    * tenant ini (dibuka oleh `tenantMiddleware`, hidup selama SATU

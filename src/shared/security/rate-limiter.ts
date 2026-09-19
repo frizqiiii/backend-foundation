@@ -6,7 +6,15 @@ import { TooManyRequestsError } from '../utils/http-error';
 
 interface CreateRateLimiterOptions {
   windowMs: number;
-  max: number;
+  /**
+   * Fase 2 (item 2.11 — rate limit per-tier/plan) — boleh berupa
+   * FUNGSI yang dievaluasi per-request (bawaan `express-rate-limit`),
+   * supaya kuota bisa bergantung pada request itu sendiri (mis. plan
+   * tenant yang aktif, lihat `tenantRateLimiter` di `app.ts`). Angka
+   * biasa tetap didukung persis seperti sebelumnya — semua limiter
+   * lain (auth, umum) tidak berubah.
+   */
+  max: number | ((req: Request) => number | Promise<number>);
   message: string;
   /** Prefix key Redis — WAJIB unik per limiter supaya hitungan rate-limit auth tidak bercampur dengan limiter umum. */
   keyPrefix: string;

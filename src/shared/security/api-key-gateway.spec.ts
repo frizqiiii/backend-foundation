@@ -64,6 +64,72 @@ describe('enforcePartnerApiGatewayLimit (item 2.10 — API Gateway edge)', () =>
     expect(mockedRedis.incr).toHaveBeenCalledWith('api-gateway:apikey:key-A');
     expect(mockedRedis.incr).toHaveBeenCalledWith('api-gateway:apikey:key-B');
   });
+
+  describe('item 2.11 — kuota per-tier/plan', () => {
+    it('FREE: 60/menit — 60 masih lolos, 61 ditolak', async () => {
+      mockedRedis.incr.mockResolvedValue(60);
+      await expect(enforcePartnerApiGatewayLimit('key-1', 'FREE')).resolves.toBeUndefined();
+
+      mockedRedis.incr.mockResolvedValue(61);
+      await expect(enforcePartnerApiGatewayLimit('key-1', 'FREE')).rejects.toThrow(
+        TooManyRequestsError
+      );
+      expect(mockedInc).toHaveBeenLastCalledWith({ outcome: 'rejected' });
+    });
+
+    it('PRO: tetap 300/menit (angka lama) — 301 ditolak', async () => {
+      mockedRedis.incr.mockResolvedValue(301);
+      await expect(enforcePartnerApiGatewayLimit('key-1', 'PRO')).rejects.toThrow(
+        TooManyRequestsError
+      );
+    });
+
+    it('ENTERPRISE: 1200/menit — 301 yang ditolak di PRO/default masih lolos di sini, 1201 ditolak', async () => {
+      mockedRedis.incr.mockResolvedValue(301);
+      await expect(enforcePartnerApiGatewayLimit('key-1', 'ENTERPRISE')).resolves.toBeUndefined();
+
+      mockedRedis.incr.mockResolvedValue(1200);
+      await expect(enforcePartnerApiGatewayLimit('key-1', 'ENTERPRISE')).resolves.toBeUndefined();
+
+      mockedRedis.incr.mockResolvedValue(1201);
+      await expect(enforcePartnerApiGatewayLimit('key-1', 'ENTERPRISE')).rejects.toThrow(
+        TooManyRequestsError
+      );
+    });
+
+    it.each([null, undefined, 'GOLD'])(
+      'plan tidak diketahui (%p) -> tier default (PRO, angka lama 300), BUKAN error dan BUKAN blokir',
+      async (plan) => {
+        mockedRedis.incr.mockResolvedValue(300);
+        await expect(enforcePartnerApiGatewayLimit('key-1', plan)).resolves.toBeUndefined();
+
+        mockedRedis.incr.mockResolvedValue(301);
+        await expect(enforcePartnerApiGatewayLimit('key-1', plan)).rejects.toThrow(
+          TooManyRequestsError
+        );
+      }
+    );
+
+    it('pesan error memuat angka kuota tier yang berlaku (bukan angka global)', async () => {
+      mockedRedis.incr.mockResolvedValue(61);
+
+      await expect(enforcePartnerApiGatewayLimit('key-1', 'FREE')).rejects.toThrow(
+        /maks 60 request\/menit/
+      );
+    });
+
+    it('perubahan plan berlaku di request berikutnya TANPA mereset hitungan window yang sedang berjalan', async () => {
+      // 100 request sudah tercatat di window ini (Redis key sama).
+      mockedRedis.incr.mockResolvedValue(100);
+
+      // Sebagai FREE (60) — sudah melewati kuota.
+      await expect(enforcePartnerApiGatewayLimit('key-1', 'FREE')).rejects.toThrow(
+        TooManyRequestsError
+      );
+      // Setelah di-upgrade ke PRO — hitungan yang SAMA (100) kini lolos.
+      await expect(enforcePartnerApiGatewayLimit('key-1', 'PRO')).resolves.toBeUndefined();
+    });
+  });
 });
 
 describe('enforcePartnerApiGatewayLimit — tanpa Redis dikonfigurasi sama sekali', () => {

@@ -1,4 +1,5 @@
 import type { PrismaClient, Tenant } from '@prisma/client';
+import type { TenantPlanName } from '../../shared/security/rate-limit-tiers';
 
 /**
  * Repository Layer untuk `Tenant` — pola identik dengan
@@ -52,8 +53,19 @@ export class TenantRepository {
     return { data, total };
   }
 
-  async create(data: { slug: string; name: string }): Promise<Tenant> {
+  async create(data: { slug: string; name: string; plan?: TenantPlanName }): Promise<Tenant> {
     return this.prisma.tenant.create({ data });
+  }
+
+  /**
+   * Fase 2 (item 2.11) — SENGAJA hanya mengubah `plan` (bukan `update`
+   * generik): update/suspend `status` tenant masih sengaja ditunda
+   * (implikasi ke sesi user aktif belum dirancang, lihat
+   * `tenant.controller.ts`), sedangkan mengganti plan cuma mengubah
+   * angka kuota rate limit — tidak ada sesi yang perlu dicabut.
+   */
+  async updatePlan(id: string, plan: TenantPlanName): Promise<Tenant> {
+    return this.prisma.tenant.update({ where: { id }, data: { plan } });
   }
 
   /**

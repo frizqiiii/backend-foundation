@@ -1,4 +1,4 @@
-import { createTenantSchema, listTenantsQuerySchema } from './tenant.dto';
+import { createTenantSchema, listTenantsQuerySchema, updateTenantPlanSchema } from './tenant.dto';
 
 describe('createTenantSchema', () => {
   it('menerima slug dan name yang valid', () => {
@@ -29,6 +29,37 @@ describe('createTenantSchema', () => {
 
   it('menolak name kosong', () => {
     expect(createTenantSchema.safeParse({ slug: 'acme', name: '' }).success).toBe(false);
+  });
+
+  it('item 2.11 — `plan` OPSIONAL (tidak diisi = default database) dan hanya menerima FREE/PRO/ENTERPRISE', () => {
+    expect(createTenantSchema.parse({ slug: 'acme', name: 'Acme' }).plan).toBeUndefined();
+    for (const plan of ['FREE', 'PRO', 'ENTERPRISE']) {
+      expect(createTenantSchema.safeParse({ slug: 'acme', name: 'Acme', plan }).success).toBe(true);
+    }
+    expect(createTenantSchema.safeParse({ slug: 'acme', name: 'Acme', plan: 'GOLD' }).success).toBe(
+      false
+    );
+    // case-sensitive — sama dengan nilai enum Postgres
+    expect(createTenantSchema.safeParse({ slug: 'acme', name: 'Acme', plan: 'free' }).success).toBe(
+      false
+    );
+  });
+});
+
+describe('updateTenantPlanSchema (item 2.11)', () => {
+  it('menerima plan yang valid', () => {
+    expect(updateTenantPlanSchema.parse({ plan: 'ENTERPRISE' })).toEqual({ plan: 'ENTERPRISE' });
+  });
+
+  it('menolak body tanpa plan atau dengan plan tak dikenal', () => {
+    expect(updateTenantPlanSchema.safeParse({}).success).toBe(false);
+    expect(updateTenantPlanSchema.safeParse({ plan: 'GOLD' }).success).toBe(false);
+  });
+
+  it('membuang field lain (mis. mencoba mengubah `status`/`slug` lewat endpoint ini) — hanya plan yang lolos', () => {
+    expect(updateTenantPlanSchema.parse({ plan: 'FREE', status: 'SUSPENDED', slug: 'x' })).toEqual({
+      plan: 'FREE',
+    });
   });
 });
 

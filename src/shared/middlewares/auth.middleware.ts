@@ -8,6 +8,7 @@ import { UserRepository } from '../../modules/users/user.repository';
 import { ApiKeyRepository } from '../../modules/api-keys/api-key.repository';
 import { ApiKeyService } from '../../modules/api-keys/api-key.service';
 import { enforcePartnerApiGatewayLimit } from '../security/api-key-gateway';
+import { resolveTenantPlanSafe } from '../tenant/tenant-plan';
 
 // Instance module-level — sama pola & alasan seperti
 // `shared/tenant/tenant.middleware.ts`: TIDAK diimpor dari
@@ -122,13 +123,19 @@ export async function authMiddleware(
  * `permission.middleware.ts`).
  */
 async function authenticateWithApiKey(req: Request, rawKey: string): Promise<void> {
-  const { apiKeyId, userId, scopes, expiresAt } = await apiKeyService.authenticate(rawKey);
+  const { apiKeyId, userId, tenantId, scopes, expiresAt } =
+    await apiKeyService.authenticate(rawKey);
 
   // Fase 2 (item 2.10 — API Gateway edge) — kuota PER API KEY,
   // ditegakkan SEDINI mungkin (sebelum query `findById` di bawah)
   // supaya request yang sudah pasti ditolak tidak ikut membebani
   // database dengan lookup yang sia-sia.
-  await enforcePartnerApiGatewayLimit(apiKeyId);
+  //
+  // Fase 2 (item 2.11 — rate limit per-tier/plan): kuota-nya sekarang
+  // mengikuti plan tenant pemilik key (`resolveTenantPlanSafe` di-
+  // cache & fail-soft — tidak menambah query per request, tidak
+  // pernah menggagalkan autentikasi).
+  await enforcePartnerApiGatewayLimit(apiKeyId, await resolveTenantPlanSafe(tenantId));
 
   const user = await userRepository.findById(userId);
   if (!user) {

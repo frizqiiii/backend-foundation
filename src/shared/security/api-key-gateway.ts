@@ -1,7 +1,7 @@
 import { redisClient } from '../config/redis';
 import { logger } from '../logger';
-import { env } from '../config/env';
 import { TooManyRequestsError } from '../utils/http-error';
+import { getRateLimitTier } from './rate-limit-tiers';
 import { partnerApiRequestsTotal } from '../../modules/monitoring/metrics/metrics.registry';
 
 /**
@@ -29,10 +29,12 @@ import { partnerApiRequestsTotal } from '../../modules/monitoring/metrics/metric
  * SAMA dengan `rate-limiter.ts` (`passOnStoreError: true`): satu
  * dependency opsional yang down TIDAK BOLEH menolak SELURUH traffic
  * partner API, cuma berarti kuota-nya untuk sesaat tidak ditegakkan.
- * Item 2.11 (rate limit per-tier/plan, belum dikerjakan) akan
- * membangun DI ATAS modul ini — menambahkan limit yang BERBEDA per
- * tier/plan API key, bukan satu angka statis untuk semua seperti
- * sekarang.
+ * Item 2.11 (rate limit per-tier/plan) membangun DI ATAS modul ini:
+ * kuota per menit sekarang bergantung pada plan tenant pemilik API
+ * key (FREE/PRO/ENTERPRISE, lihat `rate-limit-tiers.ts`), bukan satu
+ * angka statis untuk semua. `plan` tidak diketahui (`null`/
+ * `undefined`) jatuh ke tier default (PRO = angka flat lama), jadi
+ * perilaku sebelum item 2.11 tetap terjaga untuk key tanpa tenant.
  */
 
 const WINDOW_SECONDS = 60;
@@ -41,7 +43,10 @@ function gatewayKey(apiKeyId: string): string {
   return `api-gateway:apikey:${apiKeyId}`;
 }
 
-export async function enforcePartnerApiGatewayLimit(apiKeyId: string): Promise<void> {
+export async function enforcePartnerApiGatewayLimit(
+  apiKeyId: string,
+  plan?: string | null
+): Promise<void> {
   if (!redisClient) {
     // Fail-open TANPA Redis sama sekali (konsisten dengan seluruh
     // fitur berbasis Redis lain di project ini) — tapi TETAP dicatat
@@ -67,10 +72,11 @@ export async function enforcePartnerApiGatewayLimit(apiKeyId: string): Promise<v
     return;
   }
 
-  if (count > env.API_KEY_GATEWAY_RATE_LIMIT_PER_MINUTE) {
+  const limit = getRateLimitTier(plan).apiKeyRequestsPerMinute;
+  if (count > limit) {
     partnerApiRequestsTotal.inc({ outcome: 'rejected' });
     throw new TooManyRequestsError(
-      `Kuota API key terlampaui (maks ${env.API_KEY_GATEWAY_RATE_LIMIT_PER_MINUTE} request/menit). Coba lagi sesaat lagi.`
+      `Kuota API key terlampaui (maks ${limit} request/menit). Coba lagi sesaat lagi.`
     );
   }
 

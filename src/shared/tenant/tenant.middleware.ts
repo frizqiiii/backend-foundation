@@ -96,7 +96,7 @@ export async function tenantMiddleware(
         await tx.$executeRaw`SELECT set_config('app.tenant_id', ${tenant.id}, true)`;
 
         await runWithTenantContext(
-          { tenantId: tenant.id, tenantSlug: tenant.slug, db: tx },
+          { tenantId: tenant.id, tenantSlug: tenant.slug, tenantPlan: tenant.plan, db: tx },
           async () => {
             next();
             // Menahan transaksi tetap terbuka sampai response BENAR-

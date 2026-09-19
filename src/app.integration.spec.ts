@@ -632,6 +632,7 @@ describe('Integration: Event flow (Isolasi Tenant)', () => {
     slug: 'acme',
     name: 'Acme',
     status: 'ACTIVE' as const,
+    plan: 'PRO' as const,
     createdAt: new Date(),
     updatedAt: new Date(),
     deletedAt: null,

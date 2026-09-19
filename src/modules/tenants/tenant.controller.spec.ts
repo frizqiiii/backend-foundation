@@ -17,6 +17,7 @@ describe('TenantController', () => {
     tenantService = {
       list: jest.fn(),
       create: jest.fn(),
+      updatePlan: jest.fn(),
     } as unknown as jest.Mocked<TenantService>;
     controller = new TenantController(tenantService);
   });
@@ -60,6 +61,32 @@ describe('TenantController', () => {
 
       await expect(controller.create(req, res)).rejects.toThrow();
       expect(tenantService.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updatePlan (item 2.11)', () => {
+    it('memvalidasi body, memanggil service dengan id dari URL, membalas 200', async () => {
+      const req = {
+        params: { id: 'tenant-1' },
+        body: { plan: 'ENTERPRISE' },
+      } as unknown as Request;
+      const res = createMockResponse();
+      const tenant = { id: 'tenant-1', plan: 'ENTERPRISE' };
+      tenantService.updatePlan.mockResolvedValue(tenant as never);
+
+      await controller.updatePlan(req, res);
+
+      expect(tenantService.updatePlan).toHaveBeenCalledWith('tenant-1', 'ENTERPRISE');
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ data: tenant }));
+    });
+
+    it('plan tidak valid dilempar sebagai error validasi, service TIDAK dipanggil', async () => {
+      const req = { params: { id: 'tenant-1' }, body: { plan: 'GOLD' } } as unknown as Request;
+      const res = createMockResponse();
+
+      await expect(controller.updatePlan(req, res)).rejects.toThrow();
+      expect(tenantService.updatePlan).not.toHaveBeenCalled();
     });
   });
 });

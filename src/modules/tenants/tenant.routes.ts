@@ -28,5 +28,12 @@ tenantRouter.post(
   requirePermission('tenant.manage'),
   asyncHandler(tenantController.create)
 );
+// Fase 2 (item 2.11) — ganti plan (kuota rate limit) sebuah tenant.
+tenantRouter.patch(
+  '/:id/plan',
+  authMiddleware,
+  requirePermission('tenant.manage'),
+  asyncHandler(tenantController.updatePlan)
+);
 
 export { tenantService };

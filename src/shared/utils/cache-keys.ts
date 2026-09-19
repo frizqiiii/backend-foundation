@@ -38,4 +38,13 @@ export const cacheKeys = {
    * (mis. SUSPENDED) tidak butuh invalidasi manual untuk terlihat.
    */
   tenantBySlug: (slug: string): string => `cache:tenant:slug:${slug}`,
+  /**
+   * Fase 2 (item 2.11 — rate limit per-tier/plan) — plan tenant
+   * berdasarkan `id` (bukan slug): jalur API key
+   * (`authenticateWithApiKey`) hanya tahu `ApiKey.tenantId`, tidak
+   * punya slug. Hanya menyimpan plan-nya (string kecil atau `null`),
+   * bukan seluruh baris Tenant. TTL sama dengan `tenantBySlug`, dan
+   * diinvalidasi eksplisit oleh `TenantService.updatePlan`.
+   */
+  tenantPlanById: (tenantId: string): string => `cache:tenant:plan:${tenantId}`,
 };

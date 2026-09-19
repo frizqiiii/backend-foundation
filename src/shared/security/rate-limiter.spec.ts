@@ -47,6 +47,53 @@ describe('createRateLimiter', () => {
     });
   });
 
+  it('item 2.11 — `max` boleh berupa FUNGSI yang dievaluasi PER REQUEST (kuota bisa bergantung plan tenant aktif)', async () => {
+    // Dua "tenant" dibedakan lewat header, masing-masing punya kuota berbeda
+    // (mirip FREE vs ENTERPRISE) tapi memakai SATU limiter yang sama.
+    const limiter = createRateLimiter({
+      windowMs: 60_000,
+      max: (req) => (req.headers['x-plan'] === 'ENTERPRISE' ? 3 : 1),
+      message: 'Terlalu banyak permintaan',
+      keyPrefix: 'test-dynamic-max',
+      keyGenerator: (req) => String(req.headers['x-tenant']),
+    });
+    const app = buildTestApp(limiter);
+
+    // Tenant FREE-like: kuota 1 -> request ke-2 ditolak.
+    expect(
+      (await request(app).get('/ping').set('x-tenant', 't-free').set('x-plan', 'FREE')).status
+    ).toBe(200);
+    expect(
+      (await request(app).get('/ping').set('x-tenant', 't-free').set('x-plan', 'FREE')).status
+    ).toBe(429);
+
+    // Tenant ENTERPRISE-like: kuota 3 -> 3 request lolos, ke-4 ditolak.
+    for (let i = 0; i < 3; i++) {
+      const res = await request(app)
+        .get('/ping')
+        .set('x-tenant', 't-ent')
+        .set('x-plan', 'ENTERPRISE');
+      expect(res.status).toBe(200);
+    }
+    expect(
+      (await request(app).get('/ping').set('x-tenant', 't-ent').set('x-plan', 'ENTERPRISE')).status
+    ).toBe(429);
+  });
+
+  it('item 2.11 — header RateLimit-Limit mencerminkan kuota dinamis milik request itu (klien bisa tahu kuota tier-nya)', async () => {
+    const limiter = createRateLimiter({
+      windowMs: 60_000,
+      max: () => 42,
+      message: 'Terlalu banyak permintaan',
+      keyPrefix: 'test-dynamic-header',
+    });
+    const app = buildTestApp(limiter);
+
+    const res = await request(app).get('/ping');
+
+    expect(res.headers['ratelimit-limit']).toBe('42');
+  });
+
   it('P5 — keyGenerator kustom (mis. per-tenant) dipakai kalau diberikan', async () => {
     const keyGenerator = jest.fn().mockReturnValue('tenant-abc');
     const limiter = createRateLimiter({

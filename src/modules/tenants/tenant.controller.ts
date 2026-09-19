@@ -1,11 +1,13 @@
 import type { Request, Response } from 'express';
 import type { TenantService } from './tenant.service';
-import { createTenantSchema, listTenantsQuerySchema } from './tenant.dto';
+import { createTenantSchema, listTenantsQuerySchema, updateTenantPlanSchema } from './tenant.dto';
 import { sendSuccess } from '../../shared/utils/response';
 
 /**
  * Endpoint admin platform untuk mengelola tenant — SENGAJA hanya
- * `list`/`create` di fase Foundation ini (Phase 11). Update/suspend
+ * `list`/`create` di fase Foundation ini (Phase 11), plus `updatePlan`
+ * (Fase 2 item 2.11 — hanya mengubah kuota rate limit, tanpa implikasi
+ * ke sesi user). Update/suspend
  * status dan penghapusan tenant ditunda ke fase enterprise berikutnya
  * (lihat `docs/tenant-migration-strategy.md`) karena keduanya punya
  * implikasi lebih besar (mis. apa yang terjadi pada session user
@@ -26,5 +28,11 @@ export class TenantController {
     const input = createTenantSchema.parse(req.body);
     const tenant = await this.tenantService.create(input);
     sendSuccess(res, 201, 'Tenant berhasil dibuat', tenant);
+  };
+
+  updatePlan = async (req: Request, res: Response): Promise<void> => {
+    const input = updateTenantPlanSchema.parse(req.body);
+    const tenant = await this.tenantService.updatePlan(req.params.id, input.plan);
+    sendSuccess(res, 200, 'Plan tenant berhasil diperbarui', tenant);
   };
 }

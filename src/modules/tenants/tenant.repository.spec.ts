@@ -71,6 +71,33 @@ describe('TenantRepository', () => {
     expect(result).toBe(created);
   });
 
+  it('item 2.11 — create meneruskan `plan` kalau diisi', async () => {
+    const prisma = createMockPrisma();
+    (prisma.tenant.create as jest.Mock).mockResolvedValue({ id: 't1' });
+    const repository = new TenantRepository(prisma);
+
+    await repository.create({ slug: 'acme', name: 'Acme', plan: 'FREE' });
+
+    expect(prisma.tenant.create).toHaveBeenCalledWith({
+      data: { slug: 'acme', name: 'Acme', plan: 'FREE' },
+    });
+  });
+
+  it('item 2.11 — updatePlan HANYA menulis kolom plan (bukan status/slug/name)', async () => {
+    const prisma = createMockPrisma();
+    const updated = { id: 't1', plan: 'ENTERPRISE' };
+    (prisma.tenant.update as jest.Mock).mockResolvedValue(updated);
+    const repository = new TenantRepository(prisma);
+
+    const result = await repository.updatePlan('t1', 'ENTERPRISE');
+
+    expect(prisma.tenant.update).toHaveBeenCalledWith({
+      where: { id: 't1' },
+      data: { plan: 'ENTERPRISE' },
+    });
+    expect(result).toBe(updated);
+  });
+
   it('softDelete mengisi deletedAt, TIDAK menghapus row secara fisik', async () => {
     const prisma = createMockPrisma();
     const updated = { id: 't1', deletedAt: new Date() };

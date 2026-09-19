@@ -80,6 +80,7 @@ describe('tenantMiddleware', () => {
       id: 'tenant-1',
       slug: 'acme',
       status: 'ACTIVE',
+      plan: 'ENTERPRISE',
     });
 
     const req = createMockReq({ 'x-tenant-id': 'acme' });
@@ -103,6 +104,9 @@ describe('tenantMiddleware', () => {
     expect(observedContext).toEqual({
       tenantId: 'tenant-1',
       tenantSlug: 'acme',
+      // Fase 2 item 2.11 — plan tenant ikut masuk context supaya
+      // `tenantRateLimiter` bisa memilih kuota per-tier.
+      tenantPlan: 'ENTERPRISE',
       db: { $executeRaw: expect.any(Function) },
     });
   });

@@ -1,6 +1,6 @@
 import { TenantService } from './tenant.service';
 import type { TenantRepository } from './tenant.repository';
-import { ConflictError, ForbiddenError } from '../../shared/utils/http-error';
+import { ConflictError, ForbiddenError, NotFoundError } from '../../shared/utils/http-error';
 
 /**
  * Sama seperti `feature-flag.service.spec.ts` — `redisClient` bernilai
@@ -16,6 +16,7 @@ describe('TenantService', () => {
     slug: 'acme',
     name: 'Acme Corp',
     status: 'ACTIVE' as const,
+    plan: 'PRO' as const,
     createdAt: new Date(),
     updatedAt: new Date(),
     deletedAt: null,
@@ -27,6 +28,7 @@ describe('TenantService', () => {
       findById: jest.fn(),
       findMany: jest.fn(),
       create: jest.fn(),
+      updatePlan: jest.fn(),
       softDelete: jest.fn(),
     } as unknown as jest.Mocked<TenantRepository>;
 
@@ -51,6 +53,54 @@ describe('TenantService', () => {
 
       expect(tenantRepository.create).toHaveBeenCalledWith({ slug: 'acme', name: 'Acme Corp' });
       expect(result).toEqual(activeTenant);
+    });
+
+    it('item 2.11 — meneruskan `plan` eksplisit ke repository (tenant baru bisa langsung FREE/ENTERPRISE)', async () => {
+      tenantRepository.findBySlug.mockResolvedValue(null);
+      tenantRepository.create.mockResolvedValue({ ...activeTenant, plan: 'FREE' });
+
+      await tenantService.create({ slug: 'acme', name: 'Acme Corp', plan: 'FREE' });
+
+      expect(tenantRepository.create).toHaveBeenCalledWith({
+        slug: 'acme',
+        name: 'Acme Corp',
+        plan: 'FREE',
+      });
+    });
+  });
+
+  describe('resolvePlanById (item 2.11)', () => {
+    it('mengembalikan plan tenant', async () => {
+      tenantRepository.findById.mockResolvedValue({ ...activeTenant, plan: 'ENTERPRISE' });
+
+      await expect(tenantService.resolvePlanById('tenant-1')).resolves.toBe('ENTERPRISE');
+      expect(tenantRepository.findById).toHaveBeenCalledWith('tenant-1');
+    });
+
+    it('mengembalikan null (bukan melempar) kalau tenant tidak ada — pemanggil jatuh ke tier default', async () => {
+      tenantRepository.findById.mockResolvedValue(null);
+
+      await expect(tenantService.resolvePlanById('hilang')).resolves.toBeNull();
+    });
+  });
+
+  describe('updatePlan (item 2.11)', () => {
+    it('melempar NotFoundError kalau tenant tidak ada, TANPA menulis apa pun', async () => {
+      tenantRepository.findById.mockResolvedValue(null);
+
+      await expect(tenantService.updatePlan('hilang', 'FREE')).rejects.toThrow(NotFoundError);
+      expect(tenantRepository.updatePlan).not.toHaveBeenCalled();
+    });
+
+    it('menyimpan plan baru lewat repository dan mengembalikan tenant yang sudah diperbarui', async () => {
+      const updated = { ...activeTenant, plan: 'ENTERPRISE' as const };
+      tenantRepository.findById.mockResolvedValue(activeTenant);
+      tenantRepository.updatePlan.mockResolvedValue(updated);
+
+      const result = await tenantService.updatePlan('tenant-1', 'ENTERPRISE');
+
+      expect(tenantRepository.updatePlan).toHaveBeenCalledWith('tenant-1', 'ENTERPRISE');
+      expect(result).toEqual(updated);
     });
   });
 

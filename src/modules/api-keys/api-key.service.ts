@@ -101,9 +101,16 @@ export class ApiKeyService {
    * diupdate SETELAH validasi lolos (bukan sebelum) supaya key yang
    * gagal divalidasi tidak ikut mengubah state apa pun.
    */
-  async authenticate(
-    rawKey: string
-  ): Promise<{ apiKeyId: string; userId: string; scopes: Permission[]; expiresAt: Date | null }> {
+  async authenticate(rawKey: string): Promise<{
+    apiKeyId: string;
+    userId: string;
+    // Fase 2 (item 2.11) — dipakai gateway per-API-key untuk memilih
+    // kuota sesuai plan tenant pemilik key. `null` = key tanpa tenant
+    // (masa transisi Phase 11) -> tier default.
+    tenantId: string | null;
+    scopes: Permission[];
+    expiresAt: Date | null;
+  }> {
     const apiKey = await this.apiKeyRepository.findByHash(hashKey(rawKey));
     if (!apiKey) {
       throw new UnauthorizedError('API key tidak valid');
@@ -132,6 +139,7 @@ export class ApiKeyService {
     return {
       apiKeyId: apiKey.id,
       userId: apiKey.userId,
+      tenantId: apiKey.tenantId,
       scopes: apiKey.scopes as Permission[],
       expiresAt: apiKey.expiresAt,
     };
