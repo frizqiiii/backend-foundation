@@ -123,6 +123,57 @@ function extractPdfText(buffer: Buffer): { text: string; contentStreamCount: num
   return { text: combined, contentStreamCount };
 }
 
+/**
+ * Ekstensi `extractPdfText`: selain isi teks, juga tangkap POSISI X
+ * (dari operator `Tm`, sebelum tiap `Tj`/`TJ`) dan warna isi TERAKHIR
+ * yang di-set sebelum teks itu (dari operator `scn` grayscale/RGB,
+ * mengikuti `cs`). Ini yang dibutuhkan untuk menutup mutant di
+ * `columnWidth`/`startX` (posisi kolom salah = mutant kena) dan
+ * `fillColor(...)` (warna salah = mutant kena) — dua kategori TERBESAR
+ * dari mutant yang masih survive di `toPdfBuffer` sebelumnya (cuma
+ * verifikasi ISI teks tidak cukup untuk menutup mutant TATA LETAK).
+ */
+function extractPdfCells(buffer: Buffer): Array<{ x: number; text: string; color: string | null }> {
+  const raw = buffer.toString('latin1');
+  const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+  const cells: Array<{ x: number; text: string; color: string | null }> = [];
+  let match: RegExpExecArray | null;
+  while ((match = streamRegex.exec(raw)) !== null) {
+    let inflated: string;
+    try {
+      inflated = zlib.inflateSync(Buffer.from(match[1], 'latin1')).toString('latin1');
+    } catch {
+      continue;
+    }
+    let lastX: number | null = null;
+    let lastColor: string | null = null;
+    for (const line of inflated.split('\n')) {
+      const colorMatch =
+        line.match(/^([\d.]+) \1 \1 scn$/) ?? line.match(/^([\d.]+) ([\d.]+) ([\d.]+) scn$/);
+      if (colorMatch) {
+        lastColor = line.trim();
+        continue;
+      }
+      const tmMatch = line.match(/^[\d.-]+ [\d.-]+ [\d.-]+ [\d.-]+ ([\d.-]+) [\d.-]+ Tm$/);
+      if (tmMatch) {
+        lastX = parseFloat(tmMatch[1]);
+        continue;
+      }
+      const textMatch = line.match(/^<([0-9a-fA-F]+)> 0 T[jJ]$|^\[<([0-9a-fA-F]+)>.*?\] TJ$/);
+      if (textMatch && lastX !== null) {
+        const hex = textMatch[1] || textMatch[2];
+        cells.push({
+          x: lastX,
+          text: Buffer.from(hex, 'hex').toString('latin1'),
+          color: lastColor,
+        });
+        lastX = null;
+      }
+    }
+  }
+  return cells;
+}
+
 describe('toPdfBuffer', () => {
   it('menghasilkan buffer PDF valid (diawali magic bytes %PDF)', async () => {
     const rows: Row[] = [{ id: '1', name: 'Budi', note: 'Catatan' }];
@@ -190,5 +241,42 @@ describe('toPdfBuffer', () => {
     expect(contentStreamCount).toBe(1);
     expect(text).toContain('Judul Kosong');
     expect(text).toContain('Total baris: 0');
+  });
+
+  it('P5 — kolom PERSIS 3 (ID/Nama/Catatan) diposisikan berjarak columnWidth yang benar: (pageWidth - marginKiri - marginKanan) / jumlahKolom, MULAI dari marginKiri PERSIS — menutup mutant di perhitungan startX/columnWidth', async () => {
+    const rows: Row[] = [{ id: '1', name: 'Budi', note: 'X' }];
+    const buffer = await toPdfBuffer(rows, columns, 'Judul');
+    const cells = extractPdfCells(buffer);
+
+    // Dimensi NYATA A4 landscape pdfkit: 841.89 x 595.28, margin 40 di
+    // 4 sisi (dikonfirmasi lewat probe langsung ke pdfkit, bukan
+    // ditebak) — dihitung dari geometri, bukan hardcode angka piksel.
+    const PAGE_WIDTH = 841.89;
+    const MARGIN = 40;
+    const expectedColumnWidth = (PAGE_WIDTH - MARGIN - MARGIN) / columns.length;
+
+    const idCell = cells.find((c) => c.text === 'ID');
+    const namaCell = cells.find((c) => c.text === 'Nama');
+    const catatanCell = cells.find((c) => c.text === 'Catatan');
+    expect(idCell?.x).toBeCloseTo(MARGIN, 1); // startX PERSIS marginKiri
+    expect(namaCell?.x).toBeCloseTo(MARGIN + expectedColumnWidth, 1);
+    expect(catatanCell?.x).toBeCloseTo(MARGIN + expectedColumnWidth * 2, 1);
+
+    // Baris DATA (bukan cuma header) juga harus sejajar dengan kolomnya
+    const valueCell = cells.find((c) => c.text === 'Budi');
+    expect(valueCell?.x).toBeCloseTo(MARGIN + expectedColumnWidth, 1);
+  });
+
+  it('P5 — baris "Dibuat: ... — Total baris" dirender abu-abu (fillColor("gray")), BUKAN warna default hitam yang dipakai header/data', async () => {
+    const buffer = await toPdfBuffer([{ id: '1', name: 'Budi', note: 'X' }], columns, 'Judul');
+    const cells = extractPdfCells(buffer);
+
+    const dateLineCell = cells.find((c) => c.text.startsWith('Dib'));
+    const headerCell = cells.find((c) => c.text === 'ID');
+
+    // fillColor('gray') pdfkit -> RGB (0.502, 0.502, 0.502) — beda
+    // jelas dari default/fillColor('black') -> (0, 0, 0).
+    expect(dateLineCell?.color).toMatch(/^0\.50\d* 0\.50\d* 0\.50\d* scn$/);
+    expect(headerCell?.color).not.toBe(dateLineCell?.color);
   });
 });
