@@ -9,6 +9,7 @@ import { ApiKeyRepository } from '../../modules/api-keys/api-key.repository';
 import { ApiKeyService } from '../../modules/api-keys/api-key.service';
 import { enforcePartnerApiGatewayLimit } from '../security/api-key-gateway';
 import { resolveTenantPlanSafe } from '../tenant/tenant-plan';
+import { API_KEY_JTI_PREFIX } from '../security/api-key-auth';
 
 // Instance module-level — sama pola & alasan seperti
 // `shared/tenant/tenant.middleware.ts`: TIDAK diimpor dari
@@ -149,7 +150,7 @@ async function authenticateWithApiKey(req: Request, rawKey: string): Promise<voi
     id: user.id,
     email: user.email,
     role: user.role as never, // Prisma enum Role vs RoleName — sama pola cast yang sudah dipakai di seluruh test fixture (lihat auth.service.spec.ts)
-    jti: `api-key:${apiKeyId}`,
+    jti: `${API_KEY_JTI_PREFIX}${apiKeyId}`,
     exp: expiresAt ? Math.floor(expiresAt.getTime() / 1000) : NO_EXPIRY_PLACEHOLDER_EXP,
     apiKeyScopes: scopes,
   };

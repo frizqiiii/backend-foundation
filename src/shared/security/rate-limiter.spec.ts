@@ -94,6 +94,46 @@ describe('createRateLimiter', () => {
     expect(res.headers['ratelimit-limit']).toBe('42');
   });
 
+  it('temuan T1 — skipSuccessfulRequests + requestWasSuccessful: request yang dinilai "berhasil" tidak menghabiskan kuota, sisanya tetap terhitung', async () => {
+    const limiter = createRateLimiter({
+      windowMs: 60_000,
+      max: 2,
+      message: 'Terlalu banyak permintaan',
+      keyPrefix: 'test-skip-successful',
+      skipSuccessfulRequests: true,
+      // "Berhasil" = ada header x-exempt (status response TIDAK dipakai sebagai kriteria).
+      requestWasSuccessful: (req) => req.headers['x-exempt'] === '1',
+    });
+    const app = buildTestApp(limiter);
+
+    // 6 request "dibebaskan" berturut-turut — semuanya lolos walau max cuma 2.
+    for (let i = 0; i < 6; i += 1) {
+      const res = await request(app).get('/ping').set('x-exempt', '1');
+      expect(res.status).toBe(200);
+    }
+
+    // Request biasa tetap dibatasi: 2 lolos, ke-3 ditolak — dan hitungan
+    // request "dibebaskan" tadi TIDAK ikut menghabiskan jatahnya.
+    expect((await request(app).get('/ping')).status).toBe(200);
+    expect((await request(app).get('/ping')).status).toBe(200);
+    expect((await request(app).get('/ping')).status).toBe(429);
+  });
+
+  it('temuan T1 — tanpa skipSuccessfulRequests, requestWasSuccessful diabaikan (perilaku lama semua limiter lain tidak berubah)', async () => {
+    const limiter = createRateLimiter({
+      windowMs: 60_000,
+      max: 2,
+      message: 'Terlalu banyak permintaan',
+      keyPrefix: 'test-no-skip',
+      requestWasSuccessful: () => true,
+    });
+    const app = buildTestApp(limiter);
+
+    expect((await request(app).get('/ping')).status).toBe(200);
+    expect((await request(app).get('/ping')).status).toBe(200);
+    expect((await request(app).get('/ping')).status).toBe(429);
+  });
+
   it('P5 — keyGenerator kustom (mis. per-tenant) dipakai kalau diberikan', async () => {
     const keyGenerator = jest.fn().mockReturnValue('tenant-abc');
     const limiter = createRateLimiter({

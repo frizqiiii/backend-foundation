@@ -1,5 +1,5 @@
 import rateLimit from 'express-rate-limit';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { RedisStore } from 'rate-limit-redis';
 import { redisClient } from '../config/redis';
 import { TooManyRequestsError } from '../utils/http-error';
@@ -30,6 +30,21 @@ interface CreateRateLimiterOptions {
   keyGenerator?: (req: Request) => string;
   /** Lewati limiter ini untuk request tertentu (mis. tidak ada tenant context aktif — tidak ada yang perlu dibatasi per-tenant). */
   skip?: (req: Request) => boolean;
+  /**
+   * Fase 2 (temuan T1) — kalau `true`, request yang dinilai
+   * "berhasil" oleh `requestWasSuccessful` TIDAK ikut dihitung: hit-nya
+   * dikembalikan (decrement) begitu response selesai. Tanpa
+   * `requestWasSuccessful`, definisi "berhasil" bawaan
+   * `express-rate-limit` berlaku (status < 400).
+   *
+   * CATATAN PENTING: hit dihitung SAAT REQUEST MASUK dan baru
+   * dikembalikan saat response selesai, jadi request yang sedang
+   * berjalan (in-flight) tetap ikut terhitung sementara. Untuk trafik
+   * normal ini tidak terasa; hanya lonjakan konkuren yang mendekati
+   * `max` yang bisa kena batas walau semuanya akan "berhasil".
+   */
+  skipSuccessfulRequests?: boolean;
+  requestWasSuccessful?: (req: Request, res: Response) => boolean;
 }
 
 /**
@@ -72,6 +87,8 @@ export function createRateLimiter(options: CreateRateLimiterOptions): ReturnType
     passOnStoreError: true,
     ...(options.keyGenerator ? { keyGenerator: options.keyGenerator } : {}),
     ...(options.skip ? { skip: options.skip } : {}),
+    ...(options.skipSuccessfulRequests ? { skipSuccessfulRequests: true } : {}),
+    ...(options.requestWasSuccessful ? { requestWasSuccessful: options.requestWasSuccessful } : {}),
     store: redis
       ? (() => {
           const redisStore = new RedisStore({

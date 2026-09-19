@@ -39,6 +39,7 @@ import { sanitizeInput } from './shared/middlewares/sanitize-input.middleware';
 import { verifyRequestOrigin } from './shared/middlewares/csrf-protection.middleware';
 import { createRateLimiter } from './shared/security/rate-limiter';
 import { getRateLimitTier } from './shared/security/rate-limit-tiers';
+import { isApiKeyAuthenticated } from './shared/security/api-key-auth';
 import { getTenantContext } from './shared/tenant/tenant-context';
 import { openApiSpec } from './docs/openapi';
 import { env } from './shared/config/env';
@@ -91,12 +92,30 @@ export const authRateLimiter = createRateLimiter({
  * force spesifik, melainkan proteksi generik terhadap abuse/spam
  * request dalam jumlah sangat besar dari satu sumber (mis. scraper
  * yang tidak terkendali, client yang salah retry tanpa backoff).
+ *
+ * Fase 2 (temuan T1) — request yang SUDAH diautentikasi penuh lewat
+ * API key yang valid (dan masih dalam kuota per-key-nya) DIKECUALIKAN
+ * dari hitungan per-IP ini: hit-nya dikembalikan begitu response
+ * selesai. Sebelumnya semua trafik `/api/v1/*` terkena batas 300/15
+ * menit per IP, sehingga satu server partner tidak bisa melebihi
+ * ~20 request/menit berapa pun tier-nya (kuota per-key item 2.10/2.11
+ * tidak pernah tercapai dari satu IP). Untuk trafik API key yang sah,
+ * pembatasnya sekarang adalah gateway per-key (`api-key-gateway.ts`).
+ *
+ * Yang TETAP terhitung penuh (perilaku LAMA, tidak berubah): trafik
+ * JWT/anonim, percobaan API key palsu/kedaluwarsa/dicabut (401), header
+ * `Bearer bfk_...` yang ditempel di endpoint publik, dan request
+ * ber-key valid yang DITOLAK karena melampaui kuota per-key-nya.
+ * Kriterianya adalah HASIL autentikasi (`req.user`), bukan header —
+ * header bisa dipalsukan siapa pun.
  */
 const generalRateLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
   max: 300,
   message: 'Terlalu banyak permintaan dari IP ini. Coba lagi dalam beberapa menit.',
   keyPrefix: 'general',
+  skipSuccessfulRequests: true,
+  requestWasSuccessful: (req) => isApiKeyAuthenticated(req),
 });
 
 /**

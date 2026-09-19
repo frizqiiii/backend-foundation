@@ -64,18 +64,38 @@ per-key sebagai perluasan terpisah.
 
 ## Batas yang perlu diketahui (jujur)
 
-1. **Limiter per-IP berjalan lebih dulu dan berlaku untuk SEMUA plan.**
-   `generalRateLimiter` (300 request/15 menit per IP) dipasang di seluruh
-   `/api/v1/*`, sebelum limiter tenant dan sebelum gateway per-API-key. Terbukti
-   lewat probe (sandbox, Prisma di-mock): tenant `ENTERPRISE` dan request ber-header
-   `Bearer bfk_...` dari SATU IP sama-sama mulai ditolak di request ke-301 dengan
-   pesan "dari IP ini". Akibatnya tier di atas ~300 request/15 menit (per tenant)
-   dan kuota per-key 300/menit ke atas (termasuk kuota 2.10 yang sudah ada) hanya
-   terasa kalau trafiknya datang dari BANYAK IP. Itu sebabnya `FREE` sengaja 200
-   (di bawah 300) — supaya tier FREE benar-benar membatasi walau dari satu IP.
-   Ini perilaku warisan (bukan regresi item ini) dan dicatat sebagai temuan
-   terpisah; jangan diubah diam-diam — melonggarkan per-IP untuk trafik API key
-   tanpa limiter pengganti membuka kunci palsu memicu lookup DB tanpa batas.
+1. **Limiter per-IP dan trafik API key (temuan T1 — ditangani, lihat di bawah).**
+   `generalRateLimiter` (300 request/15 menit per IP) dipasang di seluruh `/api/v1/*`,
+   sebelum limiter tenant dan gateway per-API-key. Sebelum T1, terbukti lewat probe
+   bahwa tenant `ENTERPRISE` dan request ber-header `Bearer bfk_...` dari SATU IP sama-sama
+   mulai ditolak di request ke-301 ("dari IP ini"): tier di atas ~300 request/15 menit dan
+   kuota per-key 300/menit ke atas hanya terasa kalau trafiknya datang dari BANYAK IP.
+   Itu sebabnya tier `FREE` sengaja 200 (di bawah 300).
+
+   **Penanganan T1:** request yang SUDAH diautentikasi penuh lewat API key valid DAN lolos
+   kuota per-key-nya dikecualikan dari hitungan per-IP (hit-nya dikembalikan begitu
+   response selesai, lewat `skipSuccessfulRequests` + `requestWasSuccessful` bawaan
+   `express-rate-limit`). Untuk trafik itu pembatasnya sekarang gateway per-key.
+   Kriterianya hasil autentikasi (`req.user.jti` berawalan `api-key:`), BUKAN header:
+   header `Bearer bfk_...` bisa ditempel ke endpoint publik mana pun, jadi tidak boleh
+   dipercaya sebagai dasar pembebasan.
+
+   Yang TETAP terhitung penuh (perilaku lama): trafik JWT/anonim; percobaan API key
+   palsu/kedaluwarsa/dicabut; header `bfk_` di endpoint publik; dan request ber-key valid
+   yang DITOLAK karena melampaui kuota per-key-nya (supaya key yang menyalahgunakan kuota
+   tidak bisa membebani database tanpa batas — trade-off: partner yang terus-menerus
+   melampaui kuotanya bisa terkena batas per-IP, dengan pesan "dari IP ini", sampai
+   jendela 15 menitnya reset).
+
+   **Batas sisa yang jujur:** hit dihitung SAAT REQUEST MASUK dan baru dikembalikan saat
+   response selesai, jadi request yang sedang berjalan tetap terhitung sementara.
+   Probe dengan latensi DB 100 ms: 300 request KONKUREN dari satu IP semua lolos, tetapi
+   pada burst 350 dan 500 request konkuren masing-masing 50 dan 200 ditolak oleh limiter
+   per-IP. Jadi plafon per-IP untuk trafik API key kini bukan "300 request per 15 menit"
+   melainkan "sekitar 300 request yang sedang berjalan bersamaan". Dengan latensi normal
+   itu jauh di atas kebutuhan laju yang wajar (mis. 20 request/detik x 0,1 detik = 2
+   request berjalan), tetapi burst ratusan request paralel dari satu IP (mis. `Promise.all`
+   tanpa batas) masih bisa kena.
 2. Header `RateLimit-*` hanya ada untuk limiter berbasis `express-rate-limit`
    (per-IP/per-tenant). Gateway per-API-key belum mengirim header kuota.
 3. Perubahan plan tidak dicatat di audit log (butuh nilai enum `AuditAction`
@@ -88,9 +108,12 @@ per-key sebagai perluasan terpisah.
 
 Diverifikasi di sandbox (Prisma Client di-generate tipe-nya saja, engine palsu;
 Prisma di-mock; Redis tidak ada): `tsc --noEmit` bersih, `npm run lint:ci` bersih,
-full `jest` 140+ suite lolos, termasuk integration test end-to-end
+full `jest` lolos, termasuk integration test end-to-end
 (`app.tenant-rate-limit.integration.spec.ts`) yang membuktikan plan mengalir dari
-database -> `tenantMiddleware` -> `tenantRateLimiter`.
+database -> `tenantMiddleware` -> `tenantRateLimiter`, dan
+`app.api-key-ip-limit.integration.spec.ts` untuk penanganan T1 (dicek juga bahwa dua
+test yang menegaskan perilaku BARU gagal kalau pengecualian dimatikan, sedangkan empat
+test perilaku LAMA tetap lolos).
 
 **BELUM diverifikasi di environment sungguhan** (butuh Postgres/Redis kamu):
 `npx prisma migrate dev` dengan migration `20260919000000_tenant_plan_rate_limit_tiers`,
