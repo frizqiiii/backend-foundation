@@ -1,0 +1,28 @@
+# Fase 3 (item 3.2) — CODEOWNERS.
+#
+# Format: <pola path>  <pemilik>. Aturan yang PALING BAWAH yang cocok
+# menang, jadi urutan di bawah dari umum ke spesifik.
+#
+# PERHATIAN — file ini SENDIRIAN tidak menegakkan apa pun. Ia hanya
+# meminta review otomatis dari pemilik di PR. Baru berupa SYARAT merge
+# kalau branch protection `main` mengaktifkan "Require review from
+# Code Owners" (item 3.1). Dengan HANYA SATU pemilik, GitHub tidak
+# mengizinkan penulis PR menyetujui PR-nya sendiri: syarat itu akan
+# menahan merge sampai ada pemilik kedua (atau admin melakukan bypass).
+# Tambahkan pemilik kedua di sini SEBELUM mengaktifkan opsi tersebut.
+
+# Default: seluruh repo.
+*                          @frizqiiii
+
+# Area yang paling berisiko kalau salah — sengaja dituliskan eksplisit
+# supaya kelak mudah diberi pemilik/tim yang berbeda tanpa mengubah
+# aturan default di atas.
+/.github/                  @frizqiiii
+/prisma/                   @frizqiiii
+/deploy/                   @frizqiiii
+/helm/                     @frizqiiii
+/k8s/                      @frizqiiii
+/terraform/                @frizqiiii
+/monitoring/               @frizqiiii
+/src/shared/security/      @frizqiiii
+/src/shared/tenant/        @frizqiiii
