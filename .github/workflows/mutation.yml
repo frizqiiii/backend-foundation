@@ -39,7 +39,7 @@ jobs:
     # Runner GitHub (2 vCPU) kemungkinan lebih lambat daripada mesin
     # lokal — batas ini sengaja longgar. Setelah run pertama, sesuaikan
     # dengan durasi nyata (lihat "Done in ..." di log Stryker).
-    timeout-minutes: 330
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
