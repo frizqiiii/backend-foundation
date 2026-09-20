@@ -100,7 +100,20 @@ describe('TenantService', () => {
       const result = await tenantService.updatePlan('tenant-1', 'ENTERPRISE');
 
       expect(tenantRepository.updatePlan).toHaveBeenCalledWith('tenant-1', 'ENTERPRISE');
-      expect(result).toEqual(updated);
+      expect(result.tenant).toEqual(updated);
+    });
+
+    it('temuan T2 — mengembalikan plan SEBELUMNYA (dibaca sebelum menulis) supaya controller bisa mencatat "dari -> ke" di audit log', async () => {
+      tenantRepository.findById.mockResolvedValue({ ...activeTenant, plan: 'FREE' as const });
+      tenantRepository.updatePlan.mockResolvedValue({
+        ...activeTenant,
+        plan: 'ENTERPRISE' as const,
+      });
+
+      const result = await tenantService.updatePlan('tenant-1', 'ENTERPRISE');
+
+      expect(result.previousPlan).toBe('FREE');
+      expect(result.tenant.plan).toBe('ENTERPRISE');
     });
   });
 

@@ -82,6 +82,29 @@ baris ber-`previousHash = null`), yang tidak bergantung pada urutan
 baris dari query sama sekali. Test regresi untuk kasus spesifik ini
 ada di `audit.repository.spec.ts`.
 
+## Kolom `details` (temuan T2)
+
+Kolom `audit_logs.details` (TEXT, nullable) menyimpan konteks perubahan yang tidak muat di
+`action`/`entity`/`entityId`, mis. plan tenant sebelum → sesudah:
+`{"field":"plan","from":"PRO","to":"ENTERPRISE"}`.
+
+- **Disimpan sebagai TEKS JSON, bukan `Json`/JSONB.** JSONB menormalkan urutan key dan spasi, jadi
+  yang dibaca ulang saat verifikasi bisa berbeda dari yang di-hash saat baris dibuat, dan chain gagal
+  memverifikasi barisnya sendiri. Teks dibaca kembali byte-per-byte identik.
+- **Ikut di-hash HANYA kalau terisi.** Kunci `details` ditambahkan di akhir objek kanonis hanya kalau
+  non-NULL. Baris lama (semua NULL setelah migration) dan aksi tanpa konteks menghasilkan string kanonis
+  yang identik byte-per-byte dengan sebelumnya, jadi hash mereka dan chain lama tidak berubah. Menambah
+  `"details":null` ke semua baris akan mematahkan seluruh chain lama.
+- **Tamper-evident**: mengubah, menghapus (NULL-kan), atau menambahkan `details` pada baris yang sudah
+  ada terdeteksi `verifyChainIntegrity()` (dites, termasuk lewat endpoint `PATCH /tenants/:id/plan`
+  end-to-end).
+- **Jangan isi dengan data pribadi (PII).** Baris audit tidak bisa dihapus atau dikoreksi (WORM),
+  termasuk oleh penghapusan data ala GDPR (`docs/data-retention-policy.md`).
+- Migration `20260920000000_audit_log_details` hanya `ADD COLUMN`: trigger WORM memblokir UPDATE/DELETE
+  baris, bukan DDL.
+- Belum dipakai untuk aksi selain perubahan plan tenant; `AuditService.logUpdate` menerima `details`
+  opsional, aksi lain tidak berubah.
+
 ## Deteksi terjadwal + on-demand
 
 - **Job harian** (`verify-audit-chain-integrity`, jam 03:00 UTC) —

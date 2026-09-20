@@ -1,6 +1,8 @@
 import type { Request, Response } from 'express';
 import { TenantController } from './tenant.controller';
 import type { TenantService } from './tenant.service';
+import type { AuditService } from '../audit/audit.service';
+import { UnauthorizedError } from '../../shared/utils/http-error';
 
 function createMockResponse(): Response {
   const res = {} as Response;
@@ -11,6 +13,7 @@ function createMockResponse(): Response {
 
 describe('TenantController', () => {
   let tenantService: jest.Mocked<TenantService>;
+  let auditService: jest.Mocked<AuditService>;
   let controller: TenantController;
 
   beforeEach(() => {
@@ -19,7 +22,8 @@ describe('TenantController', () => {
       create: jest.fn(),
       updatePlan: jest.fn(),
     } as unknown as jest.Mocked<TenantService>;
-    controller = new TenantController(tenantService);
+    auditService = { logUpdate: jest.fn() } as unknown as jest.Mocked<AuditService>;
+    controller = new TenantController(tenantService, auditService);
   });
 
   describe('list', () => {
@@ -64,29 +68,89 @@ describe('TenantController', () => {
     });
   });
 
-  describe('updatePlan (item 2.11)', () => {
-    it('memvalidasi body, memanggil service dengan id dari URL, membalas 200', async () => {
-      const req = {
+  describe('updatePlan (item 2.11 + temuan T2)', () => {
+    function reqFor(body: unknown, user: unknown = { id: 'admin-1' }): Request {
+      return {
         params: { id: 'tenant-1' },
-        body: { plan: 'ENTERPRISE' },
+        body,
+        user,
+        headers: { 'user-agent': 'jest-agent' },
+        get: (header: string) => (header.toLowerCase() === 'user-agent' ? 'jest-agent' : undefined),
+        ip: '10.0.0.7',
+        socket: { remoteAddress: '10.0.0.7' },
       } as unknown as Request;
+    }
+
+    it('memvalidasi body, memanggil service dengan id dari URL, membalas 200', async () => {
       const res = createMockResponse();
       const tenant = { id: 'tenant-1', plan: 'ENTERPRISE' };
-      tenantService.updatePlan.mockResolvedValue(tenant as never);
+      tenantService.updatePlan.mockResolvedValue({ tenant, previousPlan: 'PRO' } as never);
 
-      await controller.updatePlan(req, res);
+      await controller.updatePlan(reqFor({ plan: 'ENTERPRISE' }), res);
 
       expect(tenantService.updatePlan).toHaveBeenCalledWith('tenant-1', 'ENTERPRISE');
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ data: tenant }));
     });
 
-    it('plan tidak valid dilempar sebagai error validasi, service TIDAK dipanggil', async () => {
-      const req = { params: { id: 'tenant-1' }, body: { plan: 'GOLD' } } as unknown as Request;
+    it('T2 — mencatat audit UPDATE pada entity Tenant: siapa (userId), dari plan apa ke plan apa (details)', async () => {
+      const res = createMockResponse();
+      tenantService.updatePlan.mockResolvedValue({
+        tenant: { id: 'tenant-1', plan: 'ENTERPRISE' },
+        previousPlan: 'FREE',
+      } as never);
+
+      await controller.updatePlan(reqFor({ plan: 'ENTERPRISE' }), res);
+
+      expect(auditService.logUpdate).toHaveBeenCalledTimes(1);
+      expect(auditService.logUpdate).toHaveBeenCalledWith(
+        'Tenant',
+        'tenant-1',
+        expect.objectContaining({ userId: 'admin-1', userAgent: 'jest-agent' }),
+        { field: 'plan', from: 'FREE', to: 'ENTERPRISE' }
+      );
+    });
+
+    it('T2 — PATCH yang tidak mengubah nilai (from == to) TETAP dicatat (aksi admin tetap bisa ditelusuri)', async () => {
+      const res = createMockResponse();
+      tenantService.updatePlan.mockResolvedValue({
+        tenant: { id: 'tenant-1', plan: 'PRO' },
+        previousPlan: 'PRO',
+      } as never);
+
+      await controller.updatePlan(reqFor({ plan: 'PRO' }), res);
+
+      expect(auditService.logUpdate).toHaveBeenCalledWith('Tenant', 'tenant-1', expect.anything(), {
+        field: 'plan',
+        from: 'PRO',
+        to: 'PRO',
+      });
+    });
+
+    it('T2 — plan tidak valid: error validasi, service DAN audit TIDAK dipanggil', async () => {
       const res = createMockResponse();
 
-      await expect(controller.updatePlan(req, res)).rejects.toThrow();
+      await expect(controller.updatePlan(reqFor({ plan: 'GOLD' }), res)).rejects.toThrow();
       expect(tenantService.updatePlan).not.toHaveBeenCalled();
+      expect(auditService.logUpdate).not.toHaveBeenCalled();
+    });
+
+    it('T2 — service gagal (mis. tenant tidak ada): TIDAK ada audit dicatat untuk aksi yang tidak terjadi', async () => {
+      const res = createMockResponse();
+      tenantService.updatePlan.mockRejectedValue(new Error('Tenant tidak ditemukan'));
+
+      await expect(controller.updatePlan(reqFor({ plan: 'FREE' }), res)).rejects.toThrow();
+      expect(auditService.logUpdate).not.toHaveBeenCalled();
+    });
+
+    it('T2 — tanpa req.user (seharusnya mustahil setelah authMiddleware) -> UnauthorizedError, tidak menulis apa pun', async () => {
+      const res = createMockResponse();
+
+      await expect(controller.updatePlan(reqFor({ plan: 'FREE' }, null), res)).rejects.toThrow(
+        UnauthorizedError
+      );
+      expect(tenantService.updatePlan).not.toHaveBeenCalled();
+      expect(auditService.logUpdate).not.toHaveBeenCalled();
     });
   });
 });

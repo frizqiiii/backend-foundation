@@ -98,9 +98,12 @@ per-key sebagai perluasan terpisah.
    tanpa batas) masih bisa kena.
 2. Header `RateLimit-*` hanya ada untuk limiter berbasis `express-rate-limit`
    (per-IP/per-tenant). Gateway per-API-key belum mengirim header kuota.
-3. Perubahan plan tidak dicatat di audit log (butuh nilai enum `AuditAction`
-   baru = migration terpisah). Follow-up yang wajar untuk perubahan yang relevan
-   dengan billing.
+3. Perubahan plan **dicatat di audit log** (temuan T2): aksi `UPDATE` pada entity `Tenant`, dengan
+   `userId` admin, IP, user-agent, dan `details` `{"field":"plan","from":...,"to":...}`. Baris itu ikut
+   hash chain (`docs/audit-log-immutability.md`). Dicatat juga untuk PATCH yang tidak mengubah nilai
+   (`from == to`). Batas: penulisan audit bersifat fail-open seperti semua aksi lain (kalau database audit
+   gagal, plan tetap berubah dan hanya muncul log peringatan). Pembuatan tenant (`POST /tenants`) belum
+   dicatat di audit log.
 4. Pada deployment TANPA Redis, cache tenant tidak aktif dan limiter memakai
    `MemoryStore` per-instance — perilaku yang sama seperti limiter lain.
 

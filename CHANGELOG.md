@@ -60,6 +60,10 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   `.github/dependabot.yml` (ekosistem `github-actions`) menjaga pin tetap diperbarui lewat PR.
 
 ### Diperbaiki
+- **Perubahan plan tenant kini tercatat di audit log** (temuan T2): siapa yang mengubah, kapan, dan dari plan
+  apa ke plan apa. Kolom baru `audit_logs.details` (TEKS JSON, ikut hash chain hanya kalau terisi, sehingga
+  hash baris lama tidak berubah). Migration `20260920000000_audit_log_details`. `TenantService.updatePlan`
+  sekarang mengembalikan `{ tenant, previousPlan }`. Lihat `docs/audit-log-immutability.md`.
 - **Router API versi baru terlindungi rate limit sejak dibuat** (temuan T8): `generalRateLimiter` dan
   `tenantRateLimiter` diekstrak dari `createV1Router()` ke `createApiRouter()`, titik awal wajib setiap
   router `/api/vN`. Perilaku v1 tidak berubah. Penjaga `api-router.guard.spec.ts` gagal kalau router versi
