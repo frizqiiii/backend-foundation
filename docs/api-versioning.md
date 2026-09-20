@@ -151,10 +151,32 @@ Ingat: header ini hanya PEMBERITAHUAN — perilaku endpoint tidak berubah.
 ### 2.6. Path yang membeku (frozen) sampai koordinasi dengan pihak luar
 
 - **`/api/v1/auth/sso/:tenantSlug/callback`**: URL ini didaftarkan di IdP masing-masing
-  tenant (Okta, Azure AD, dst.). Menghapusnya berarti SEMUA tenant SSO harus mengubah
-  konfigurasi IdP-nya, dan itu di luar kendali kita. Rekomendasi: path ini tetap dilayani
-  bahkan setelah `/api/v1` lain di-sunset (alias), atau dijadikan path yang tidak
-  bergantung versi. Putuskan SEBELUM sunset v1 pertama.
+  tenant (Okta, Azure AD, dst.). `SsoService` mengirimnya sebagai `redirect_uri` di setiap
+  login dan tukar-kode, dan IdP hanya mengembalikan pengguna ke URL yang SUDAH terdaftar.
+  Mengubah path yang dikirim, atau mematikan path yang dilayani, membuat SEMUA tenant SSO gagal
+  login sampai masing-masing admin mendaftarkan URL baru di IdP-nya — di luar kendali kita.
+
+  **Kontrak ini sudah dikunci oleh test** (temuan T7): `src/app.sso-callback-contract.integration.spec.ts`
+  memastikan (1) path yang dikirim ke IdP persis `/api/v1/auth/sso/:tenantSlug/callback`, dan (2) path
+  itu benar-benar dilayani aplikasi. Dibuktikan dengan dua mutasi: menaikkan URL yang dikirim ke
+  `/api/v2` membuat kedua pemeriksaan gagal, dan mencabut route callback membuat pemeriksaan
+  "dilayani" gagal. Kalau test itu gagal, jangan mengubah test-nya — putuskan dulu bagaimana tenant
+  SSO yang ada dimigrasikan.
+
+  **Keputusan yang masih terbuka (milik pemilik project) untuk saat sunset v1.** Opsi:
+  - **A (rekomendasi): pertahankan path beku.** Saat `/api/v1` dinyatakan sunset, sisakan router
+    `/api/v1` MINIMAL yang hanya memuat `/auth/sso/:tenantSlug/login`, `/auth/sso/:tenantSlug/callback`,
+    dan `/auth/sso/consume` (dibuat dari `createApiRouter()` dan memakai `authRateLimiter`, lihat 2.5),
+    sementara sisa v1 mengembalikan `410 Gone`. Nol pekerjaan bagi tenant; biayanya satu router kecil
+    yang hidup selamanya dan kewajiban tetap merawat tiga endpoint itu.
+  - **B: migrasi tenant.** Dukung dua `redirect_uri` sekaligus selama masa transisi (mis. field
+    per-koneksi yang memilih versi URL), minta tiap admin tenant mendaftarkan URL baru, lalu matikan yang
+    lama. Bersih di akhir, tetapi butuh perubahan skema, komunikasi ke tiap tenant, dan tenggat yang tidak
+    bisa kita paksakan.
+  - **C: alias tak-berversi** (mis. `/auth/sso/...` di luar `/api/vN`) dan hanya untuk tenant BARU. Tidak
+    menyelesaikan tenant yang sudah terdaftar, jadi hanya berguna digabung dengan A atau B.
+  Belum ada yang diterapkan; sampai ada keputusan, satu-satunya perilaku yang dijamin adalah yang dikunci
+  test di atas.
 - **`/api/v1/internal/alertmanager-webhook`**: internal, tapi hardcoded di
   `alertmanager.yml`. Kalau v1 dimatikan, ubah konfigurasi Alertmanager dulu.
 
@@ -189,7 +211,7 @@ Item 2.12 hanya dokumentasi. Berikut yang harus dibangun kalau kebijakan di atas
 | G5 | Payload webhook tanpa versi | Bagian 2.7 |
 | G6 | Tidak ada aturan versi OpenAPI/`package.json` | Usulan: `info.version` OpenAPI mengikuti perubahan aditif (minor), path mengikuti mayor |
 | G7 | Belum ada `CHANGELOG.md` | Roadmap 3.4; tempat mencatat perubahan aditif dan deprecation |
-| G8 | Path SSO callback terikat `/api/v1` | Bagian 2.6, keputusan sebelum sunset pertama |
+| G8 | Path SSO callback terikat `/api/v1` | **Dikunci test** (T7, bagian 2.6). Sisa: keputusan opsi A/B/C sebelum sunset pertama |
 
 ## 4. Status verifikasi dokumen
 
