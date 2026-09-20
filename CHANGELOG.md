@@ -60,6 +60,10 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   `.github/dependabot.yml` (ekosistem `github-actions`) menjaga pin tetap diperbarui lewat PR.
 
 ### Diperbaiki
+- **URL callback SSO dikunci sebagai kontrak eksternal** (temuan T7): test `app.sso-callback-contract.integration.spec.ts`
+  memastikan path yang dikirim ke identity provider (`/api/v1/auth/sso/:tenantSlug/callback`) tidak berubah dan
+  benar-benar dilayani. Mengubah/mematikannya akan membuat semua tenant SSO gagal login. Keputusan sunset v1
+  (opsi A/B/C) dicatat di `docs/api-versioning.md` bagian 2.6.
 - **Perubahan plan tenant kini tercatat di audit log** (temuan T2): siapa yang mengubah, kapan, dan dari plan
   apa ke plan apa. Kolom baru `audit_logs.details` (TEKS JSON, ikut hash chain hanya kalau terisi, sehingga
   hash baris lama tidak berubah). Migration `20260920000000_audit_log_details`. `TenantService.updatePlan`
