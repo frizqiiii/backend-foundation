@@ -51,6 +51,11 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
 - Skor mutation testing dinaikkan menjadi 91,35% pada run penuh terakhir
   (`export.ts` mendapat test posisi kolom dan warna PDF).
 
+### Keamanan
+- **`aquasecurity/trivy-action` di-pin ke SHA commit penuh** (temuan T10), bukan `@master`: ref yang bisa
+  berubah pada scanner keamanan adalah risiko rantai pasok (insiden 2026-03-19, tag action di-force-push ke
+  malware). Lihat `docs/sbom-and-signing.md`.
+
 ### Diperbaiki
 - **CI tidak lagi mem-push dan menandatangani image pada run `pull_request`** (temuan T9): job
   `docker-build-and-scan` hanya login/push/sign/attest pada event `push` ke `main`; PR cukup build lokal,

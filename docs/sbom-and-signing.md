@@ -58,6 +58,21 @@ kosong pada event `push`. Batas yang jujur: izin `packages: write`/`id-token: wr
 Diverifikasi dengan `actionlint` dan uji shell langkah referensi; belum dibuktikan di run GitHub Actions
 sungguhan (lihat catatan verifikasi di bawah).
 
+### Kebijakan pin action pihak ketiga (temuan T10)
+
+Step Trivy memakai `aquasecurity/trivy-action` yang di-pin ke **SHA commit penuh** (`# v0.36.0`),
+bukan `@master` atau tag. Alasannya insiden 2026-03-19: 76 dari 77 tag `trivy-action` di-force-push ke
+malware pencuri kredensial (GHSA-69fq-xp46-6x23 / CVE-2026-33634); tag bisa dipindahkan, SHA tidak.
+Job ini berjalan dengan `packages: write` dan `id-token: write`, jadi action yang jahat akan mendapat
+token bertenaga. Diperiksa sebelum pin: SHA `ed142fd0…` adalah commit tag v0.36.0; `setup-trivy` di
+dalamnya di-pin SHA `3fb12ec1…` (sama dengan tag `v0.2.6` saat ini, versi yang dibuat ulang dengan isi
+aman); tidak ada pola mencurigakan di `action.yaml`/`entrypoint.sh`.
+
+**Batas yang jujur:** action lain di workflow (`anchore/sbom-action`, `sigstore/cosign-installer`,
+`docker/*`, `actions/*`) masih memakai tag mayor yang bisa berubah — lihat temuan T12 di roadmap. Versi
+Trivy yang dipakai berubah dari "apa pun yang ada di master" menjadi v0.70.0; hasil scan bisa sedikit
+berbeda dan gate perlu dibuktikan lewat run CI sungguhan.
+
 ## Verifikasi nyata yang sudah dijalankan (sandbox)
 
 `syft` dan `cosign` diinstall sungguhan dan diuji langsung (bukan cuma
