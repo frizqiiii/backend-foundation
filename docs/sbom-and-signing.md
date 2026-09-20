@@ -36,6 +36,28 @@ sendiri juga dipindah supaya scan digest yang SAMA persis dengan yang
 di-sign (bukan tag lokal terpisah) — memastikan yang di-scan dan yang
 di-sign adalah image yang IDENTIK bit-per-bit.
 
+### Push hanya pada event `push` ke `main` (temuan T9)
+
+Alur di atas (push ke GHCR, scan by digest, SBOM, sign, attest) sebelumnya berjalan di SETIAP run CI,
+termasuk yang dipicu `pull_request`. Akibatnya image dari kode yang belum di-review ikut masuk registry
+dan ditandatangani (tanda tangan hanya berarti "dibangun oleh workflow ini di SHA itu", bukan "sudah
+di-review"), dan PR dari fork gagal karena tidak punya `packages: write`. Sekarang ada dua mode
+(dibedakan `github.event_name`):
+
+| Langkah | `push` ke `main` | `pull_request` |
+|---|---|---|
+| Login GHCR, push image | ya (alur lama) | tidak |
+| Build | `push: true` | `load: true` (image lokal di runner) |
+| Trivy scan | by digest dari registry | image lokal, by tag SHA |
+| SBOM (syft) + unggah artifact | by digest dari registry | dari image lokal (`docker:`) |
+| Sign + attest (cosign) | ya | tidak |
+
+Gate Trivy dan pembuatan SBOM tetap berlaku di PR. Langkah "Tentukan referensi image" gagal keras kalau digest
+kosong pada event `push`. Batas yang jujur: izin `packages: write`/`id-token: write` tetap di level job
+(GitHub tidak mendukung izin per-kondisi); yang berubah adalah langkah yang memakainya tidak dijalankan di PR.
+Diverifikasi dengan `actionlint` dan uji shell langkah referensi; belum dibuktikan di run GitHub Actions
+sungguhan (lihat catatan verifikasi di bawah).
+
 ## Verifikasi nyata yang sudah dijalankan (sandbox)
 
 `syft` dan `cosign` diinstall sungguhan dan diuji langsung (bukan cuma

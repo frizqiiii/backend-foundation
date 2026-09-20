@@ -52,6 +52,9 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   (`export.ts` mendapat test posisi kolom dan warna PDF).
 
 ### Diperbaiki
+- **CI tidak lagi mem-push dan menandatangani image pada run `pull_request`** (temuan T9): job
+  `docker-build-and-scan` hanya login/push/sign/attest pada event `push` ke `main`; PR cukup build lokal,
+  scan Trivy, dan SBOM. Lihat `docs/sbom-and-signing.md`.
 - **Limiter per-IP tidak lagi membatasi trafik API key yang sah** (temuan T1): request
   yang sudah diautentikasi penuh lewat API key valid dan lolos kuota per-key dikecualikan
   dari batas 300 request/15 menit per IP, sehingga tier tinggi bisa tercapai dari satu IP.

@@ -133,28 +133,64 @@ jobs:
       contents: read
       packages: write
       id-token: write
+    #
+    # Temuan T9 — DUA MODE, dibedakan oleh `github.event_name`:
+    #  - `push` (ke main): alur LAMA persis — push ke GHCR, scan, SBOM,
+    #    sign, attest.
+    #  - `pull_request`: image HANYA di-build lokal di runner (`load`),
+    #    di-scan dan di-SBOM dari image lokal itu, TIDAK di-push dan TIDAK
+    #    di-sign. Sebelum ini, tiap run PR ikut mem-push image ke GHCR dan
+    #    menandatanganinya (keyless) — registry terisi image dari kode yang
+    #    belum di-review, tanda tangan tidak berarti "sudah di-review", dan
+    #    PR dari fork gagal karena tidak punya `packages: write`.
+    # `packages: write`/`id-token: write` tetap di level job (GitHub tidak
+    # mendukung izin kondisional); langkah yang memakainya di-`if` ke push.
     steps:
       - uses: actions/checkout@v4
 
       - name: Log in ke GHCR
+        if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build & push image
+      - name: "Build image (PR: lokal saja) / Build & push image (push ke main)"
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
+          push: ${{ github.event_name == 'push' }}
+          load: ${{ github.event_name != 'push' }}
           tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+      # Referensi image untuk scan & SBOM. Push: dari registry, by digest
+      # (persis seperti sebelumnya). PR: image lokal di daemon runner.
+      - name: Tentukan referensi image
+        id: ref
+        env:
+          EVENT: ${{ github.event_name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ghcr.io/${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = "push" ]; then
+            if [ -z "$DIGEST" ]; then
+              echo "::error::Digest image kosong pada event push — build/push gagal diam-diam?"
+              exit 1
+            fi
+            echo "trivy=${IMAGE}@${DIGEST}" >> "$GITHUB_OUTPUT"
+            echo "syft=${IMAGE}@${DIGEST}" >> "$GITHUB_OUTPUT"
+          else
+            echo "trivy=${IMAGE}:${SHA}" >> "$GITHUB_OUTPUT"
+            echo "syft=docker:${IMAGE}:${SHA}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: "Trivy scan (gate - multer v2 + npm/corepack removal applied, IMPLEMENTED not yet VERIFIED on real Actions run, revert exit-code to 0 if other findings remain)"
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
+          image-ref: ${{ steps.ref.outputs.trivy }}
           format: table
           severity: CRITICAL,HIGH
           exit-code: '1'
@@ -168,7 +204,7 @@ jobs:
 
       - name: Generate SBOM (CycloneDX)
         run: |
-          syft "ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}" \
+          syft "${{ steps.ref.outputs.syft }}" \
             -o cyclonedx-json=sbom.cyclonedx.json \
             -o table
 
@@ -181,13 +217,17 @@ jobs:
 
       # Image signing + SBOM attestation (item 2.5) — KEYLESS, lihat
       # komentar `permissions.id-token` di atas untuk alasan lengkap.
+      # Hanya event `push` (lihat komentar T9 di atas): PR tidak di-sign.
       - name: Install cosign
+        if: github.event_name == 'push'
         uses: sigstore/cosign-installer@v3
 
       - name: Sign image (keyless)
+        if: github.event_name == 'push'
         run: cosign sign --yes "ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}"
 
       - name: Attest SBOM ke image (keyless)
+        if: github.event_name == 'push'
         run: |
           cosign attest --yes --type cyclonedx \
             --predicate sbom.cyclonedx.json \
