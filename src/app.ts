@@ -160,21 +160,53 @@ const tenantRateLimiter = createRateLimiter({
 });
 
 /**
- * Router gabungan untuk v1 — semua modul dipasang di sini, lalu
- * router ini dipasang SEKALI di `/api/v1`. Kalau suatu saat perlu
- * `/api/v2` (mis. breaking change di response shape), cukup buat
- * `v2Router` serupa tanpa mengubah v1 yang sudah dipakai klien lama.
+ * Fase 2 (temuan T8) — SATU-SATUNYA cara resmi membuat router API
+ * berversi. Mengembalikan `Router` yang SUDAH memasang lapisan rate
+ * limit yang wajib untuk semua versi:
+ *  - `generalRateLimiter` (per-IP),
+ *  - `tenantRateLimiter` (per-tenant, mengikuti plan).
+ *
+ * Kenapa dijadikan fungsi: kedua limiter ini dulu dipasang langsung di
+ * dalam `createV1Router()`, bukan di level `app`. Kalau `/api/v2` dibuat
+ * dengan `Router()` biasa ("serupa v1", seperti saran komentar lama di
+ * sini), ia TIDAK otomatis terlindungi rate limit dan tidak ada yang
+ * memperingatkan. Dengan `createApiRouter()`, router versi baru
+ * terlindungi sejak dibuat. Dijaga oleh `api-router.guard.spec.ts`
+ * (gagal kalau ada router `/api/vN` yang tidak dibuat lewat fungsi ini).
+ *
+ * Kedua limiter adalah singleton level modul (bukan instance baru per
+ * router), jadi kuota per-IP dan per-tenant dihitung GABUNGAN lintas
+ * versi — klien tidak bisa melipatgandakan jatahnya dengan berpindah
+ * `/api/v1` <-> `/api/v2`.
+ *
+ * TIDAK termasuk di sini (tetap tanggung jawab tiap versi): `authRateLimiter`
+ * untuk mount `/auth` (lebih ketat; brute-force login), dan daftar modul.
+ * Versi baru yang memasang `/auth` HARUS memakai `authRateLimiter` juga.
  */
-function createV1Router(): Router {
-  const v1Router = Router();
+export function createApiRouter(): Router {
+  const router = Router();
 
-  // Rate limiter umum berlaku untuk SELURUH v1 — dipasang di level
-  // router ini (bukan diulang manual per-modul) supaya modul baru di
-  // masa depan otomatis ikut terlindungi tanpa perlu diingat-ingat.
-  v1Router.use(generalRateLimiter);
+  // Rate limiter umum berlaku untuk SELURUH versi — dipasang di level
+  // router (bukan diulang manual per-modul) supaya modul baru di masa
+  // depan otomatis ikut terlindungi tanpa perlu diingat-ingat.
+  router.use(generalRateLimiter);
   // Phase 18 — lapisan per-tenant TAMBAHAN, lihat komentar lengkap di
   // definisi `tenantRateLimiter` di atas.
-  v1Router.use(tenantRateLimiter);
+  router.use(tenantRateLimiter);
+
+  return router;
+}
+
+/**
+ * Router gabungan untuk v1 — semua modul dipasang di sini, lalu
+ * router ini dipasang SEKALI di `/api/v1`. Kalau suatu saat perlu
+ * `/api/v2` (mis. breaking change di response shape), buat `createV2Router()`
+ * yang juga dimulai dari `createApiRouter()` (BUKAN `Router()` polos),
+ * tanpa mengubah v1 yang sudah dipakai klien lama. Lihat
+ * `docs/api-versioning.md` bagian 2.5.
+ */
+function createV1Router(): Router {
+  const v1Router = createApiRouter();
 
   v1Router.use('/auth', authRateLimiter, authRouter);
   v1Router.use('/users', userRouter);

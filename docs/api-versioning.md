@@ -26,8 +26,9 @@ Tidak ada versioning lewat header (`Accept-Version`, `X-API-Version`) maupun que
 
 Middleware global (Helmet, CORS, `express.json`, sanitasi input, `verifyRequestOrigin`,
 `tenantMiddleware`, logger, metrics) dipasang di level `app`, jadi berlaku untuk versi
-mana pun. Yang dipasang DI DALAM `createV1Router()` hanya `generalRateLimiter`,
-`tenantRateLimiter`, dan `authRateLimiter` untuk `/auth`.
+mana pun. Rate limit per-versi dipasang oleh `createApiRouter()` (`generalRateLimiter` dan
+`tenantRateLimiter`), yang menjadi titik awal setiap `createVNRouter()` (temuan T8); hanya
+`authRateLimiter` untuk mount `/auth` yang masih dipasang manual per versi.
 
 ### Yang belum ada
 
@@ -125,13 +126,21 @@ Ingat: header ini hanya PEMBERITAHUAN — perilaku endpoint tidak berubah.
 
 1. Buat `createV2Router()` di samping `createV1Router()` dan pasang di `/api/v2`. Jangan
    ubah router v1.
-2. **Pasang ulang `generalRateLimiter` dan `tenantRateLimiter`** di router v2 — keduanya
-   ada di dalam `createV1Router()`, bukan di level `app`, jadi v2 TIDAK otomatis
-   terlindungi. Karena keduanya singleton level modul, memakai instance yang sama berarti
-   kuota per-IP/per-tenant dihitung GABUNGAN lintas versi (hampir pasti perilaku yang
-   diinginkan; kalau mau terpisah, buat instance baru dengan `keyPrefix` berbeda).
-   Refactor kecil yang disarankan: ekstrak "middleware umum API" ke satu fungsi yang
-   dipakai kedua router, supaya tidak ada yang terlupa.
+2. **Mulai `createV2Router()` dari `createApiRouter()`, BUKAN `Router()` polos.**
+   `createApiRouter()` (di `src/app.ts`) sudah memasang `generalRateLimiter` dan
+   `tenantRateLimiter`, jadi router v2 terlindungi sejak dibuat (temuan T8; sebelumnya kedua
+   limiter itu tertanam di `createV1Router()` dan router v2 "serupa v1" tidak terlindungi
+   tanpa peringatan apa pun). Dua penjaga mencegah kemunduran:
+   `src/api-router.guard.spec.ts` (gagal kalau ada mount `/api/vN` yang factory-nya tidak
+   dimulai dari `createApiRouter()`) dan `src/app.api-router.integration.spec.ts` (perilaku
+   nyata, termasuk kontrol negatif: `Router()` polos terbukti tidak terlindungi — 320 request
+   semuanya lolos). Karena kedua limiter singleton level modul, kuota per-IP/per-tenant
+   dihitung GABUNGAN lintas versi (terbukti: 150 request di v1 + 150 di v2 menghabiskan jatah
+   300; klien tidak bisa melipatgandakan jatahnya dengan berpindah versi). Kalau kuota mau
+   dipisah per versi, buat instance limiter baru dengan `keyPrefix` berbeda.
+   **Yang masih manual:** `authRateLimiter` pada mount `/auth` (lebih ketat, mencegah
+   brute-force login) tidak ikut `createApiRouter()` — versi baru yang memasang `/auth` HARUS
+   memakainya (`v2Router.use('/auth', authRateLimiter, ...)`); belum ada penjaga otomatis untuk itu.
 3. Modul yang tidak berubah antar versi boleh dipasang di kedua router (router modul yang
    sama). Hanya modul yang berubah yang perlu implementasi v2.
 4. Dokumentasi: `servers` OpenAPI sekarang hanya `/api/v1`. Untuk v2 perlu spec terpisah
@@ -176,7 +185,7 @@ Item 2.12 hanya dokumentasi. Berikut yang harus dibangun kalau kebijakan di atas
 | G1 | Middleware deprecation (`Deprecation`/`Sunset`/`Link`) | Per-router, dikonfigurasi lewat tanggal; mudah dites unit |
 | G2 | Cakupan Pact hanya `POST /auth/login` | Tambah interaksi untuk endpoint yang dipakai konsumen nyata |
 | G3 | Metric tanpa dimensi tenant/API key | Untuk tahu siapa yang masih di v1: log terstruktur per request (tenantId/apiKeyId) atau label bercardinality rendah |
-| G4 | Middleware umum API hidup di `createV1Router()` | Ekstrak agar v2 tidak lupa memasangnya (bagian 2.5) |
+| G4 | ~~Middleware umum API hidup di `createV1Router()`~~ | **Selesai (T8):** `createApiRouter()` + penjaga. Sisa: `authRateLimiter` di `/auth` masih manual per versi |
 | G5 | Payload webhook tanpa versi | Bagian 2.7 |
 | G6 | Tidak ada aturan versi OpenAPI/`package.json` | Usulan: `info.version` OpenAPI mengikuti perubahan aditif (minor), path mengikuti mayor |
 | G7 | Belum ada `CHANGELOG.md` | Roadmap 3.4; tempat mencatat perubahan aditif dan deprecation |

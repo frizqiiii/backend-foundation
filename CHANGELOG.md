@@ -60,6 +60,10 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   `.github/dependabot.yml` (ekosistem `github-actions`) menjaga pin tetap diperbarui lewat PR.
 
 ### Diperbaiki
+- **Router API versi baru terlindungi rate limit sejak dibuat** (temuan T8): `generalRateLimiter` dan
+  `tenantRateLimiter` diekstrak dari `createV1Router()` ke `createApiRouter()`, titik awal wajib setiap
+  router `/api/vN`. Perilaku v1 tidak berubah. Penjaga `api-router.guard.spec.ts` gagal kalau router versi
+  dibuat dengan `Router()` polos. Lihat `docs/api-versioning.md` bagian 2.5.
 - **CI tidak lagi mem-push dan menandatangani image pada run `pull_request`** (temuan T9): job
   `docker-build-and-scan` hanya login/push/sign/attest pada event `push` ke `main`; PR cukup build lokal,
   scan Trivy, dan SBOM. Lihat `docs/sbom-and-signing.md`.
