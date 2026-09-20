@@ -1,0 +1,23 @@
+# Temuan T12 — Dependabot untuk GitHub Actions.
+#
+# Semua `uses:` di workflow di-pin ke SHA commit penuh (bukan tag) karena tag/branch bisa
+# dipindahkan (insiden trivy-action, 2026-03-19). Konsekuensinya: pin TIDAK ikut naik versi
+# sendiri. Dependabot memantau tiap action dan membuka PR yang mengganti SHA + komentar
+# versinya (`# vX.Y.Z`), sehingga pembaruan tetap lewat review dan CI, bukan diam-diam.
+#
+# SENGAJA hanya ekosistem `github-actions` (bukan `npm`): keputusan memakai Dependabot
+# untuk dependency aplikasi punya dampak (banjir PR, kebijakan versi) dan dibahas terpisah.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '02:00'
+      timezone: Asia/Jakarta
+    open-pull-requests-limit: 5
+    commit-message:
+      # Sesuai conventional commits yang dipakai repo: `ci(deps): bump ...`
+      prefix: ci
+      include: scope

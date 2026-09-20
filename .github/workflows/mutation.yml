@@ -36,13 +36,13 @@ jobs:
   mutation:
     name: Stryker (full)
     runs-on: ubuntu-latest
-    # Runner GitHub (2 vCPU) kemungkinan lebih lambat daripada mesin
-    # lokal — batas ini sengaja longgar. Setelah run pertama, sesuaikan
-    # dengan durasi nyata (lihat "Done in ..." di log Stryker).
+    # Run manual pertama di GitHub selesai dalam 30m34s; batas ini ~3x
+    # durasi itu (margin untuk hari runner lambat). Naikkan kalau run
+    # mingguan mulai mendekatinya.
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -57,7 +57,7 @@ jobs:
         run: node scripts/mutation-summary.js >> "$GITHUB_STEP_SUMMARY"
       - name: Unggah laporan
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: mutation-report
           path: reports/mutation/
