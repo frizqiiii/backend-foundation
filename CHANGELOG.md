@@ -55,6 +55,9 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
 - **`aquasecurity/trivy-action` di-pin ke SHA commit penuh** (temuan T10), bukan `@master`: ref yang bisa
   berubah pada scanner keamanan adalah risiko rantai pasok (insiden 2026-03-19, tag action di-force-push ke
   malware). Lihat `docs/sbom-and-signing.md`.
+- **Semua action di workflow di-pin ke SHA commit penuh** (temuan T12), termasuk `appleboy/ssh-action` yang
+  memegang secret SSH VPS. Penjaga `workflow-pinning.spec.ts` gagal di PR kalau ada action tidak ber-pin, dan
+  `.github/dependabot.yml` (ekosistem `github-actions`) menjaga pin tetap diperbarui lewat PR.
 
 ### Diperbaiki
 - **CI tidak lagi mem-push dan menandatangani image pada run `pull_request`** (temuan T9): job

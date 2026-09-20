@@ -68,10 +68,24 @@ token bertenaga. Diperiksa sebelum pin: SHA `ed142fd0…` adalah commit tag v0.3
 dalamnya di-pin SHA `3fb12ec1…` (sama dengan tag `v0.2.6` saat ini, versi yang dibuat ulang dengan isi
 aman); tidak ada pola mencurigakan di `action.yaml`/`entrypoint.sh`.
 
-**Batas yang jujur:** action lain di workflow (`anchore/sbom-action`, `sigstore/cosign-installer`,
-`docker/*`, `actions/*`) masih memakai tag mayor yang bisa berubah — lihat temuan T12 di roadmap. Versi
-Trivy yang dipakai berubah dari "apa pun yang ada di master" menjadi v0.70.0; hasil scan bisa sedikit
-berbeda dan gate perlu dibuktikan lewat run CI sungguhan.
+**Semua action lain juga di-pin (temuan T12).** Setiap `uses:` di `ci.yml`, `deploy.yml`, dan
+`mutation.yml` memakai SHA commit penuh dengan komentar versi (`# v4.4.0`, dst.). Yang paling
+sensitif: `appleboy/ssh-action` (memegang secret SSH VPS di `deploy.yml`) dan action di job Docker
+(`docker/*`, `sigstore/cosign-installer`, `anchore/sbom-action`, yang berjalan dengan `packages: write`
+dan `id-token: write`). SHA diambil dari `git ls-remote` ke repo resminya dan dicocokkan dengan tag versi
+lengkap (pin membekukan kode yang SAAT INI dijalankan tag mayor itu, jadi perilaku CI tidak berubah).
+Catatan: `actions/dependency-review-action@v4` ternyata sebuah BRANCH (bukan tag), yang memang bergerak
+terus. Dua penjaga mencegah kemunduran dan kebusukan pin:
+
+- `src/shared/security/workflow-pinning.spec.ts` (jalan di job `Test`): gagal di PR kalau ada `uses:` yang
+  bukan SHA 40 hex, dengan menyebut `file:baris`-nya. Dibuktikan dengan mutasi: mengembalikan satu action ke
+  tag membuat test gagal.
+- `.github/dependabot.yml` (ekosistem `github-actions`, mingguan): membuka PR yang mengganti SHA dan
+  komentar versinya, jadi pin tidak membusuk dan pembaruan tetap lewat review dan CI.
+
+**Batas yang jujur:** pin membekukan versi, bukan membuktikan commit itu aman — SHA yang saya ambil
+adalah yang ditunjuk tag resmi hari ini. Versi Trivy yang dipakai berubah dari "apa pun yang ada di master"
+menjadi v0.70.0; hasil scan bisa sedikit berbeda dan gate dibuktikan lewat run CI (hijau).
 
 ## Verifikasi nyata yang sudah dijalankan (sandbox)
 
