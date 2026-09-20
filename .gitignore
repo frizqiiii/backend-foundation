@@ -52,3 +52,9 @@ Thumbs.db
 
 # Husky (dibuat ulang otomatis oleh `npm run prepare`)
 .husky/_/
+
+# Artefak lokal (bukan bagian repo)
+vault_*_windows_amd64/
+jest-output.txt
+mutants-report.txt
+desktop.ini
