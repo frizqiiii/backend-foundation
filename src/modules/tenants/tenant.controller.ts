@@ -1,7 +1,10 @@
 import type { Request, Response } from 'express';
 import type { TenantService } from './tenant.service';
+import type { AuditService } from '../audit/audit.service';
 import { createTenantSchema, listTenantsQuerySchema, updateTenantPlanSchema } from './tenant.dto';
 import { sendSuccess } from '../../shared/utils/response';
+import { UnauthorizedError } from '../../shared/utils/http-error';
+import { getClientIp, getUserAgent } from '../../shared/utils/request-context';
 
 /**
  * Endpoint admin platform untuk mengelola tenant — SENGAJA hanya
@@ -16,7 +19,10 @@ import { sendSuccess } from '../../shared/utils/response';
  * peletakan fondasi skema.
  */
 export class TenantController {
-  constructor(private readonly tenantService: TenantService) {}
+  constructor(
+    private readonly tenantService: TenantService,
+    private readonly auditService: AuditService
+  ) {}
 
   list = async (req: Request, res: Response): Promise<void> => {
     const query = listTenantsQuerySchema.parse(req.query);
@@ -31,8 +37,25 @@ export class TenantController {
   };
 
   updatePlan = async (req: Request, res: Response): Promise<void> => {
+    if (!req.user) {
+      throw new UnauthorizedError();
+    }
+
     const input = updateTenantPlanSchema.parse(req.body);
-    const tenant = await this.tenantService.updatePlan(req.params.id, input.plan);
+    const { tenant, previousPlan } = await this.tenantService.updatePlan(req.params.id, input.plan);
+
+    // Temuan T2 — perubahan plan menentukan kuota (dan kemungkinan tagihan), jadi harus
+    // tercatat SIAPA yang mengubah, KAPAN, dan dari plan APA ke plan APA. Dicatat juga
+    // untuk PATCH yang tidak mengubah nilai (from == to): itu tetap aksi admin yang
+    // perlu bisa ditelusuri. Kegagalan menulis audit tidak menggagalkan request
+    // (perilaku `AuditService` untuk semua aksi lain).
+    await this.auditService.logUpdate(
+      'Tenant',
+      tenant.id,
+      { userId: req.user.id, ipAddress: getClientIp(req), userAgent: getUserAgent(req) },
+      { field: 'plan', from: previousPlan, to: tenant.plan }
+    );
+
     sendSuccess(res, 200, 'Plan tenant berhasil diperbarui', tenant);
   };
 }

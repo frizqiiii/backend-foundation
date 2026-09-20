@@ -24,6 +24,36 @@ function canonicalize(row: {
   });
 }
 
+/**
+ * Temuan T2 — salinan INDEPENDEN formula kanonis untuk baris yang punya `details`: kunci
+ * `details` ditambahkan di AKHIR objek. `canonicalize` di atas (tanpa details) sengaja dibiarkan
+ * SEBAGAI salinan formula LAMA: ia membuktikan bahwa baris tanpa details masih di-hash persis
+ * seperti sebelum kolom `details` ada.
+ */
+function canonicalizeWithDetails(row: {
+  id: string;
+  userId: string | null;
+  action: string;
+  entity: string;
+  entityId: string | null;
+  ipAddress: string | null;
+  userAgent: string | null;
+  createdAt: Date;
+  details: string;
+}): string {
+  return JSON.stringify({
+    id: row.id,
+    userId: row.userId,
+    action: row.action,
+    entity: row.entity,
+    entityId: row.entityId,
+    ipAddress: row.ipAddress,
+    userAgent: row.userAgent,
+    createdAt: row.createdAt.toISOString(),
+    details: row.details,
+  });
+}
+
 function computeHash(canonical: string, previousHash: string | null): string {
   return createHash('sha256')
     .update(`${canonical}|${previousHash ?? ''}`)
@@ -72,6 +102,40 @@ describe('AuditRepository', () => {
       expect(insertArgs.data.previousHash).toBeNull();
       expect(insertArgs.data.hash).toBe(computeHash(canonicalize({ ...insertArgs.data }), null));
       expect(result).toBe(created);
+    });
+
+    it('T2 — create TANPA details: hash IDENTIK dengan formula LAMA (baris tanpa details tidak berubah sama sekali)', async () => {
+      const prisma = createMockPrisma();
+      prisma.__tx.$queryRaw.mockResolvedValue([{ lastHash: 'prev-hash' }]);
+      prisma.__tx.auditLog.create.mockResolvedValue({ id: 'a1' });
+      const repository = new AuditRepository(prisma);
+
+      await repository.create(data);
+
+      const insertArgs = prisma.__tx.auditLog.create.mock.calls[0][0];
+      expect(insertArgs.data.details).toBeNull();
+      expect(insertArgs.data.hash).toBe(
+        computeHash(canonicalize({ ...insertArgs.data }), 'prev-hash')
+      );
+    });
+
+    it('T2 — create DENGAN details: details disimpan apa adanya dan IKUT di-hash (hash berbeda dari baris tanpa details)', async () => {
+      const prisma = createMockPrisma();
+      prisma.__tx.$queryRaw.mockResolvedValue([{ lastHash: 'prev-hash' }]);
+      prisma.__tx.auditLog.create.mockResolvedValue({ id: 'a1' });
+      const repository = new AuditRepository(prisma);
+      const details = '{"field":"plan","from":"PRO","to":"ENTERPRISE"}';
+
+      await repository.create({ ...data, details });
+
+      const insertArgs = prisma.__tx.auditLog.create.mock.calls[0][0];
+      expect(insertArgs.data.details).toBe(details);
+      expect(insertArgs.data.hash).toBe(
+        computeHash(canonicalizeWithDetails({ ...insertArgs.data }), 'prev-hash')
+      );
+      expect(insertArgs.data.hash).not.toBe(
+        computeHash(canonicalize({ ...insertArgs.data }), 'prev-hash')
+      );
     });
 
     it('baris BERIKUTNYA: previousHash diambil dari audit_chain_state (SELECT ... FOR UPDATE)', async () => {
@@ -148,6 +212,75 @@ describe('AuditRepository', () => {
         ...overrides,
       };
     }
+
+    describe('T2 — kolom details di hash chain', () => {
+      const details = '{"field":"plan","from":"PRO","to":"ENTERPRISE"}';
+
+      function chainWithDetails(): {
+        legacy: ReturnType<typeof makeRow>;
+        withDetails: ReturnType<typeof makeRow> & { details: string | null };
+      } {
+        const legacy = makeRow({ id: 'r1', previousHash: null });
+        legacy.hash = computeHash(canonicalize(legacy), null);
+        const base = makeRow({
+          id: 'r2',
+          previousHash: legacy.hash,
+          action: 'UPDATE',
+          entity: 'Tenant',
+        });
+        const hash = computeHash(canonicalizeWithDetails({ ...base, details }), legacy.hash);
+        return { legacy, withDetails: { ...base, hash, details } };
+      }
+
+      it('chain campuran (baris LAMA tanpa details + baris baru dengan details): valid', async () => {
+        const prisma = createMockPrisma();
+        const { legacy, withDetails } = chainWithDetails();
+        (prisma.auditLog.findMany as jest.Mock).mockResolvedValue([
+          { ...legacy, details: null }, // baris lama setelah migration: kolom baru NULL
+          withDetails,
+        ]);
+
+        const result = await new AuditRepository(prisma).verifyChainIntegrity();
+
+        expect(result).toEqual({ valid: true });
+      });
+
+      it('details DIUBAH setelah dibuat -> terdeteksi di baris itu', async () => {
+        const prisma = createMockPrisma();
+        const { legacy, withDetails } = chainWithDetails();
+        (prisma.auditLog.findMany as jest.Mock).mockResolvedValue([
+          { ...legacy, details: null },
+          { ...withDetails, details: '{"field":"plan","from":"PRO","to":"FREE"}' },
+        ]);
+
+        const result = await new AuditRepository(prisma).verifyChainIntegrity();
+
+        expect(result).toMatchObject({ valid: false, brokenAt: { id: 'r2' } });
+      });
+
+      it('details DIHAPUS (di-NULL-kan) dari baris yang dulu punya details -> terdeteksi', async () => {
+        const prisma = createMockPrisma();
+        const { legacy, withDetails } = chainWithDetails();
+        (prisma.auditLog.findMany as jest.Mock).mockResolvedValue([
+          { ...legacy, details: null },
+          { ...withDetails, details: null },
+        ]);
+
+        const result = await new AuditRepository(prisma).verifyChainIntegrity();
+
+        expect(result).toMatchObject({ valid: false, brokenAt: { id: 'r2' } });
+      });
+
+      it('details DITAMBAHKAN ke baris lama yang di-hash tanpa details -> terdeteksi', async () => {
+        const prisma = createMockPrisma();
+        const { legacy } = chainWithDetails();
+        (prisma.auditLog.findMany as jest.Mock).mockResolvedValue([{ ...legacy, details }]);
+
+        const result = await new AuditRepository(prisma).verifyChainIntegrity();
+
+        expect(result).toMatchObject({ valid: false, brokenAt: { id: 'r1' } });
+      });
+    });
 
     it('chain kosong (belum ada baris berhash sama sekali): valid', async () => {
       const prisma = createMockPrisma();

@@ -40,6 +40,35 @@ describe('AuditService', () => {
     });
   });
 
+  it('temuan T2 — logUpdate dengan details: disimpan sebagai TEKS JSON (bukan objek) di repository.create', async () => {
+    const repository = createMockRepository();
+    const service = new AuditService(repository);
+
+    await service.logUpdate('Tenant', 'tenant-1', actor, {
+      field: 'plan',
+      from: 'PRO',
+      to: 'FREE',
+    });
+
+    expect(repository.create).toHaveBeenCalledWith({
+      ...actor,
+      action: 'UPDATE',
+      entity: 'Tenant',
+      entityId: 'tenant-1',
+      details: '{"field":"plan","from":"PRO","to":"FREE"}',
+    });
+  });
+
+  it('temuan T2 — logUpdate TANPA details: objek ke repository TIDAK punya kunci `details` sama sekali (identik dengan sebelum T2)', async () => {
+    const repository = createMockRepository();
+    const service = new AuditService(repository);
+
+    await service.logUpdate('Event', 'event-1', actor);
+
+    const passed = (repository.create as jest.Mock).mock.calls[0][0];
+    expect(Object.keys(passed)).not.toContain('details');
+  });
+
   it('logLogout memakai userId sebagai entityId, sama seperti logLogin', async () => {
     const repository = createMockRepository();
     const service = new AuditService(repository);

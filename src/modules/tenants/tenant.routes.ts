@@ -6,10 +6,13 @@ import { requirePermission } from '../../shared/middlewares/permission.middlewar
 import { TenantRepository } from './tenant.repository';
 import { TenantService } from './tenant.service';
 import { TenantController } from './tenant.controller';
+import { AuditRepository } from '../audit/audit.repository';
+import { AuditService } from '../audit/audit.service';
 
 const tenantRepository = new TenantRepository(prisma);
 const tenantService = new TenantService(tenantRepository);
-const tenantController = new TenantController(tenantService);
+const auditService = new AuditService(new AuditRepository(prisma));
+const tenantController = new TenantController(tenantService, auditService);
 
 export const tenantRouter = Router();
 

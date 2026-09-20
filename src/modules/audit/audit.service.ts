@@ -62,10 +62,19 @@ export class AuditService {
       | 'SUSPICIOUS_LOGIN_DETECTED',
     entity: string,
     entityId: string | null,
-    actor: AuditActorContext
+    actor: AuditActorContext,
+    details?: string
   ): Promise<void> {
     try {
-      await this.auditRepository.create({ ...actor, action, entity, entityId });
+      await this.auditRepository.create({
+        ...actor,
+        action,
+        entity,
+        entityId,
+        // Kunci `details` HANYA ada kalau diisi — panggilan tanpa konteks tetap
+        // membentuk objek yang identik dengan sebelum temuan T2.
+        ...(details !== undefined ? { details } : {}),
+      });
     } catch (error) {
       logger.warn(
         { err: error, action, entity, entityId, userId: actor.userId },
@@ -78,8 +87,24 @@ export class AuditService {
     await this.record('CREATE', entity, entityId, actor);
   }
 
-  async logUpdate(entity: string, entityId: string, actor: AuditActorContext): Promise<void> {
-    await this.record('UPDATE', entity, entityId, actor);
+  /**
+   * `details` (opsional, temuan T2): konteks perubahan yang tidak muat di `entity`/`entityId`,
+   * mis. `{ field: 'plan', from: 'PRO', to: 'ENTERPRISE' }` — disimpan sebagai teks JSON dan ikut
+   * di-hash chain. JANGAN berisi data pribadi (PII): baris audit tidak bisa dihapus/dikoreksi.
+   */
+  async logUpdate(
+    entity: string,
+    entityId: string,
+    actor: AuditActorContext,
+    details?: Record<string, unknown>
+  ): Promise<void> {
+    await this.record(
+      'UPDATE',
+      entity,
+      entityId,
+      actor,
+      details === undefined ? undefined : JSON.stringify(details)
+    );
   }
 
   async logDelete(entity: string, entityId: string, actor: AuditActorContext): Promise<void> {

@@ -16,6 +16,12 @@ export interface CreateAuditLogInput extends AuditActorContext {
   action: AuditAction;
   entity: string;
   entityId: string | null;
+  /**
+   * Temuan T2 — konteks perubahan sebagai TEKS JSON (lihat komentar `AuditLog.details`
+   * di `schema.prisma`). Opsional; tanpa ini baris tetap valid dan hash-nya identik dengan
+   * sebelum kolom ini ada. JANGAN berisi data pribadi (PII): baris audit tidak bisa dihapus.
+   */
+  details?: string | null;
 }
 
 export type { AuditAction };

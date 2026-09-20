@@ -23,8 +23,9 @@ function canonicalize(row: {
   ipAddress: string | null;
   userAgent: string | null;
   createdAt: Date;
+  details?: string | null;
 }): string {
-  return JSON.stringify({
+  const base = {
     id: row.id,
     userId: row.userId,
     action: row.action,
@@ -33,7 +34,17 @@ function canonicalize(row: {
     ipAddress: row.ipAddress,
     userAgent: row.userAgent,
     createdAt: row.createdAt.toISOString(),
-  });
+  };
+  // Temuan T2 — `details` ikut di-hash HANYA kalau terisi. Menambahkan
+  // `"details":null` ke SEMUA baris akan mengubah serialisasi (dan hash) setiap
+  // baris yang sudah ada dan mematahkan chain lama. Dengan syarat ini, baris
+  // tanpa details (semua baris lama, dan aksi yang tidak butuh konteks)
+  // menghasilkan string kanonis yang IDENTIK BYTE-PER-BYTE dengan sebelumnya.
+  // `details` disimpan sebagai TEKS (bukan JSONB) supaya yang dibaca ulang saat
+  // verifikasi sama persis dengan yang di-hash saat dibuat.
+  return JSON.stringify(
+    row.details !== undefined && row.details !== null ? { ...base, details: row.details } : base
+  );
 }
 
 function computeHash(canonical: string, previousHash: string | null): string {
@@ -85,12 +96,13 @@ export class AuditRepository {
           ipAddress: data.ipAddress,
           userAgent: data.userAgent,
           createdAt,
+          details: data.details ?? null,
         }),
         previousHash
       );
 
       const created = await tx.auditLog.create({
-        data: { ...data, id, createdAt, hash, previousHash },
+        data: { ...data, details: data.details ?? null, id, createdAt, hash, previousHash },
       });
 
       await tx.$executeRaw`

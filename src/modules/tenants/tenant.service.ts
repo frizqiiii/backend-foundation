@@ -92,7 +92,10 @@ export class TenantService {
    * habis. Tanpa Redis (cache tidak aktif) tidak ada yang perlu
    * diinvalidasi — pembacaan berikutnya langsung ke database.
    */
-  async updatePlan(id: string, plan: TenantPlanName): Promise<Tenant> {
+  async updatePlan(
+    id: string,
+    plan: TenantPlanName
+  ): Promise<{ tenant: Tenant; previousPlan: TenantPlanName }> {
     const existing = await this.tenantRepository.findById(id);
     if (!existing) {
       throw new NotFoundError('Tenant tidak ditemukan');
@@ -102,7 +105,9 @@ export class TenantService {
       this.invalidateSlugCache(updated.slug),
       invalidateCache(cacheKeys.tenantPlanById(id)),
     ]);
-    return updated;
+    // Temuan T2 — plan SEBELUMNYA dikembalikan supaya pemanggil (controller) bisa
+    // mencatat perubahan "dari -> ke" di audit log tanpa membaca ulang (yang rawan race).
+    return { tenant: updated, previousPlan: existing.plan };
   }
 
   async invalidateSlugCache(slug: string): Promise<void> {

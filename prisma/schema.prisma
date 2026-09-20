@@ -728,6 +728,20 @@ model AuditLog {
   hash         String? @map("hash")
   previousHash String? @map("previous_hash")
 
+  // Temuan T2 — konteks perubahan yang TIDAK muat di `action`/`entity`/
+  // `entityId` (mis. plan tenant sebelum -> sesudah: `{"field":"plan",
+  // "from":"PRO","to":"ENTERPRISE"}`), disimpan sebagai TEKS JSON persis
+  // seperti yang ditulis — BUKAN tipe `Json`/JSONB, karena JSONB
+  // menormalkan urutan key dan spasi, sehingga hasil bacaan bisa tak
+  // identik dengan yang di-hash saat baris dibuat (hash chain gagal
+  // memverifikasi barisnya sendiri). NULLABLE: baris lama dan aksi yang
+  // tidak butuh konteks tetap `null`. Ikut di-hash HANYA kalau terisi
+  // (lihat `canonicalize` di `audit.repository.ts`), jadi hash SEMUA baris
+  // yang sudah ada tidak berubah. JANGAN isi dengan data pribadi (PII):
+  // baris audit tidak bisa dihapus/dikoreksi (WORM), termasuk oleh
+  // penghapusan data ala GDPR (`docs/data-retention-policy.md`).
+  details String? @db.Text
+
   // Index komposit `[entity, entityId]` — query paling umum untuk
   // audit log adalah "tampilkan seluruh riwayat perubahan pada
   // Event/Product tertentu", bukan mencari lintas seluruh entity.
