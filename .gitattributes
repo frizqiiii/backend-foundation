@@ -1,0 +1,13 @@
+# Akhir baris: LF di working copy pada SEMUA OS.
+#
+# Tanpa file ini, di Windows dengan `core.autocrlf=true` setiap `git checkout`/`git pull` menulis ulang
+# file yang berubah dengan CRLF. Akibatnya (terbukti): `npm run lint:ci` lokal gagal massal karena
+# `.prettierrc` mewajibkan `endOfLine: lf` (mis. 740 error di 4 file yang baru ditarik lewat pull), dan
+# skrip shell (`scripts/*.sh`, `deploy/`) yang ikut dibangun ke image Docker atau disalin ke VPS bisa
+# rusak karena `\r` di akhir baris. Dengan `eol=lf`, working copy selalu LF, sama dengan isi repo di GitHub
+# dan dengan CI (Linux).
+* text=auto eol=lf
+
+# Pengecualian: skrip batch Windows memang butuh CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
