@@ -188,7 +188,17 @@ jobs:
           fi
 
       - name: "Trivy scan (gate - multer v2 + npm/corepack removal applied, IMPLEMENTED not yet VERIFIED on real Actions run, revert exit-code to 0 if other findings remain)"
-        uses: aquasecurity/trivy-action@master
+        # Temuan T10 — di-pin ke SHA commit PENUH, bukan tag/branch. Pada
+        # 2026-03-19 tag `aquasecurity/trivy-action` (76 dari 77) di-force-push
+        # ke malware pencuri kredensial (GHSA-69fq-xp46-6x23 / CVE-2026-33634);
+        # tag dan `@master` adalah pointer yang BISA BERUBAH, SHA tidak.
+        # Commit ini = tag v0.36.0 (dirilis pasca-insiden): `setup-trivy` dan
+        # `actions/cache` di dalamnya sudah di-pin SHA, dan versi Trivy bawaannya
+        # v0.70.0 (rilis berbahaya v0.69.4-0.69.6 sudah dicabut). Cara memperbarui:
+        # `git ls-remote --tags https://github.com/aquasecurity/trivy-action`, ambil
+        # SHA commit (baris `^{}` kalau tag beranotasi), periksa `action.yaml`-nya,
+        # LALU jalankan CI — versi Trivy berbeda bisa menemukan hal yang berbeda.
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ steps.ref.outputs.trivy }}
           format: table
