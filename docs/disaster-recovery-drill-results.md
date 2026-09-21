@@ -7,6 +7,13 @@
 > `docs/disaster-recovery-guide.md` § "Uji DR Secara Berkala", dijalankan
 > untuk pertama kalinya secara nyata.
 
+> **KOREKSI (temuan T19):** drill ini dijalankan dengan role yang mem-bypass RLS (superuser), jadi tidak
+> mengungkap bahwa `backup-db.sh` **gagal** dengan role aplikasi di bawah `FORCE ROW LEVEL SECURITY`, bahwa jalan pintas
+> `--enable-row-security` menghasilkan backup kosong yang lolos verifikasi, dan bahwa `verify-backup.sh` bisa menimpa
+> production lewat `VERIFY_DATABASE_URL` yang ejaannya berbeda. Semuanya sudah diperbaiki; lihat
+> `docs/backup-restore-guide.md` (bagian "WAJIB: role backup harus mem-bypass Row-Level Security"). Hasil di bawah tetap
+> berlaku untuk role superuser.
+
 ## Metodologi
 
 Dibuat instance PostgreSQL 16 sungguhan (bukan mock), skema di-apply

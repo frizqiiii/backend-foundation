@@ -47,7 +47,7 @@ BACKUP_DIR="${BACKUP_DIR:-$PROJECT_ROOT/backups}"
 # sini (bukan dibaca dari file bersama) karena keduanya adalah skrip
 # bash mandiri tanpa mekanisme "import" — konsistensi dijaga manual,
 # lihat komentar yang SAMA di kedua file.
-KEY_TABLES="users events products"
+KEY_TABLES="users events products api_keys webhook_endpoints export_jobs"
 
 if ! command -v pg_restore &> /dev/null; then
   echo "FATAL: pg_restore tidak ditemukan. Install postgresql-client (mis. apt install postgresql-client)." >&2
@@ -82,6 +82,24 @@ if [ -f "$ENV_FILE" ]; then
     echo "FATAL: VERIFY_DATABASE_URL SAMA PERSIS dengan DATABASE_URL production di $ENV_FILE." >&2
     echo "Skrip ini akan MENIMPA database tujuan — pastikan menunjuk ke database verifikasi terpisah." >&2
     exit 1
+  fi
+
+  # Temuan T19 — pembanding string di atas GAMPANG dilewati: URL yang menunjuk ke database yang SAMA dengan
+  # ejaan berbeda (mis. `localhost` vs `127.0.0.1`, atau tambahan `?sslmode=...`) lolos, lalu `pg_restore
+  # --clean` MENIMPA production (terbukti di PostgreSQL 16 sungguhan: 5 baris data baru hilang). Identitas
+  # database ditanyakan langsung ke servernya: nama database + OID + waktu start postmaster. Kalau production
+  # tidak terjangkau dari mesin ini (verifikasi biasanya jalan di host terpisah), pemeriksaan ini dilewati.
+  db_identity() {
+    psql --dbname="$1" -tAc "SELECT current_database() || '|' || (SELECT oid FROM pg_database WHERE datname = current_database()) || '|' || pg_postmaster_start_time();" 2>/dev/null || echo ""
+  }
+  if [ -n "$PROD_DATABASE_URL" ]; then
+    PROD_IDENTITY=$(db_identity "$PROD_DATABASE_URL")
+    VERIFY_IDENTITY=$(db_identity "$VERIFY_DATABASE_URL")
+    if [ -n "$PROD_IDENTITY" ] && [ "$PROD_IDENTITY" = "$VERIFY_IDENTITY" ]; then
+      echo "FATAL: VERIFY_DATABASE_URL menunjuk ke database YANG SAMA dengan DATABASE_URL production ($ENV_FILE)," >&2
+      echo "walau ejaan URL-nya berbeda. Skrip ini akan MENIMPA database tujuan — dihentikan." >&2
+      exit 1
+    fi
   fi
 fi
 
@@ -132,7 +150,9 @@ for TABLE in $KEY_TABLES; do
     continue
   fi
 
-  ACTUAL=$(psql --dbname="$VERIFY_DATABASE_URL" -tAc "SELECT COUNT(*) FROM \"$TABLE\";" 2>/dev/null || echo "ERROR")
+  # Temuan T19 — `row_security=off`: role yang tunduk RLS mendapat ERROR (terlihat sebagai [GAGAL]), bukan `0`
+  # palsu yang kebetulan sama dengan metadata (tabel ber-RLS selalu terlihat kosong tanpa konteks tenant).
+  ACTUAL=$(PGOPTIONS='-c row_security=off' psql --dbname="$VERIFY_DATABASE_URL" -tAc "SELECT COUNT(*) FROM \"$TABLE\";" 2>/dev/null || echo "ERROR")
 
   if [ "$ACTUAL" = "$EXPECTED" ]; then
     echo "  [OK]     $TABLE — $ACTUAL baris (sama persis dengan saat backup dibuat)."

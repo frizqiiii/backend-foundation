@@ -19,6 +19,11 @@
 
 set -euo pipefail
 
+# Temuan T19 — file backup berisi SELURUH data (hash password, PII, token, hash API key, secret
+# terenkripsi). Tanpa umask ketat, `pg_dump` membuat file 0644 dan `mkdir -p` membuat direktori 0755,
+# sehingga user lokal mana pun di VPS bisa membacanya. `umask 077` -> file 0600, direktori 0700.
+umask 077
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 ENV_FILE="${ENV_FILE:-$PROJECT_ROOT/.env}"
@@ -52,6 +57,31 @@ if [ -z "$DATABASE_URL" ]; then
   exit 1
 fi
 
+# Temuan T19 — role untuk backup. Tabel `products`, `events`, `api_keys`, `webhook_endpoints`, dan `export_jobs`
+# memakai FORCE ROW LEVEL SECURITY. Role aplikasi (`DATABASE_URL`) TUNDUK pada RLS: `pg_dump` menolak
+# (`query would be affected by row-level security policy`), dan jalan pintas `--enable-row-security` akan
+# menghasilkan backup yang BERHASIL tetapi KOSONG untuk semua tabel itu (terbukti di PostgreSQL 16 sungguhan).
+# Karena itu backup harus memakai role yang mem-bypass RLS (superuser atau `BYPASSRLS`), lewat
+# `BACKUP_DATABASE_URL`; kalau tidak diisi, dipakai `DATABASE_URL` dan dicek di bawah.
+BACKUP_DATABASE_URL="${BACKUP_DATABASE_URL:-$DATABASE_URL}"
+
+if ! command -v psql &> /dev/null; then
+  echo "FATAL: psql tidak ditemukan (dibutuhkan untuk memeriksa hak role backup dan menulis metadata)." >&2
+  exit 1
+fi
+
+CAN_BYPASS_RLS=$(psql --dbname="$BACKUP_DATABASE_URL" -tAc "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user;" 2>/dev/null || echo "")
+if [ "$CAN_BYPASS_RLS" != "t" ]; then
+  if [ -z "$CAN_BYPASS_RLS" ]; then
+    echo "FATAL: tidak bisa terhubung ke database dengan BACKUP_DATABASE_URL/DATABASE_URL untuk memeriksa hak role backup." >&2
+  else
+    echo "FATAL: role untuk backup TIDAK boleh tunduk pada Row-Level Security (butuh superuser atau atribut BYPASSRLS)." >&2
+    echo "Backup dengan role ini akan gagal, atau lebih buruk: menghasilkan backup KOSONG untuk tabel ber-RLS." >&2
+    echo "Buat role khusus backup, lalu set BACKUP_DATABASE_URL — lihat docs/backup-restore-guide.md." >&2
+  fi
+  exit 1
+fi
+
 mkdir -p "$BACKUP_DIR"
 
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
@@ -62,7 +92,7 @@ echo "Memulai backup database ke $BACKUP_FILE ..."
 # `-F c` (custom format): terkompresi, mendukung restore paralel &
 # selektif lewat pg_restore. `-v` (verbose) ke stderr agar progress
 # terlihat tanpa mencampur output dengan hasil dump itu sendiri.
-if pg_dump --dbname="$DATABASE_URL" -F c -v -f "$BACKUP_FILE"; then
+if pg_dump --dbname="$BACKUP_DATABASE_URL" -F c -v -f "$BACKUP_FILE"; then
   BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
   echo "Backup berhasil: $BACKUP_FILE ($BACKUP_SIZE)"
 else
@@ -90,8 +120,10 @@ if command -v psql &> /dev/null; then
   {
     echo "backup_file=$(basename "$BACKUP_FILE")"
     echo "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    for TABLE in users events products; do
-      COUNT=$(psql --dbname="$DATABASE_URL" -tAc "SELECT COUNT(*) FROM \"$TABLE\";" 2>/dev/null || echo "")
+    # Temuan T19 — `row_security=off`: kalau role tunduk RLS, query GAGAL keras (kunci dilewati), bukan
+    # mengembalikan 0 palsu. Tabel ber-RLS ditambahkan supaya verifikasi mencakup data yang paling penting.
+    for TABLE in users events products api_keys webhook_endpoints export_jobs; do
+      COUNT=$(PGOPTIONS='-c row_security=off' psql --dbname="$BACKUP_DATABASE_URL" -tAc "SELECT COUNT(*) FROM \"$TABLE\";" 2>/dev/null || echo "")
       if [ -n "$COUNT" ]; then
         echo "rowcount_${TABLE}=${COUNT}"
       fi
