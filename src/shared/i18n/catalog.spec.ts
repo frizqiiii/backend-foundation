@@ -38,6 +38,10 @@ const INTENTIONALLY_UNTRANSLATED_PREFIXES: ReadonlyArray<readonly [string, strin
     'PrivacyRepository:',
     'error invariant internal (pengaman erasure T15), disamarkan sebagai 500 di production',
   ],
+  [
+    'MULTI/EXEC tidak mengembalikan',
+    'error internal gateway (T18), langsung ditangkap fail-open, tidak sampai ke pengguna',
+  ],
 ];
 
 /** File yang pesannya internal (log job, provider pihak ketiga, health, antrean) — tidak sampai ke pengguna API. */

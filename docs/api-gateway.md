@@ -58,6 +58,28 @@ Plus 15/15 unit test (mocked) mencakup: window reset sekali di awal
 (bukan bergeser terus), persis di batas vs melewati batas, fail-open
 saat Redis error DAN saat Redis tidak dikonfigurasi sama sekali.
 
+## Temuan audit T18: kuota API key bisa tersangkut PERMANEN tanpa TTL (sudah diperbaiki)
+
+Verifikasi Redis di atas hanya menguji jalur normal. Audit `enforcePartnerApiGatewayLimit` dengan menyuntikkan kegagalan
+menemukan cacat pada pola `INCR` lalu `EXPIRE` (hanya bila hitungan == 1): dua perintah terpisah. Kalau `EXPIRE` gagal
+sekali saja (koneksi putus, failover Redis, proses mati di antara keduanya), kunci hidup TANPA TTL. Hitungannya terus naik,
+tidak pernah `== 1` lagi sehingga TTL tidak pernah diset ulang, dan begitu melewati batas API key itu ditolak
+**permanen** sampai ada yang menghapus kuncinya manual (`fail-open` hanya menutup kegagalan itu sekali; request berikutnya
+sudah normal dan tidak ada lagi jejaknya di log).
+
+**Terbukti di Redis 7 sungguhan** dengan fungsi asli dan satu kegagalan `EXPIRE` yang disuntikkan: sesudah 5 request
+`ttl = -1` (tidak pernah kedaluwarsa); dari hitungan 299 → lolos, DITOLAK, DITOLAK, dan `ttl` tetap `-1`.
+
+**Perbaikan:** hitungan dan TTL dibuat dalam SATU `MULTI/EXEC` atomik: `SET key 0 EX 60 NX` (membuat kunci + TTL hanya bila
+belum ada; `NX` menjaga window yang berjalan tidak bergeser) lalu `INCR`. Tidak butuh `EXPIRE ... NX` (Redis ≥ 7.0). Bukti
+sesudah perbaikan di Redis sungguhan dengan `EXPIRE` yang SELALU gagal: `ttl = 60`, hitungan benar, dan TTL yang
+diturunkan ke 10 detik tetap 10 setelah request berikutnya (window tidak bergeser). Mengembalikan pola lama membuat tiga tes
+baru gagal.
+
+Catatan desain yang tidak diubah [dibaca]: (1) window tetap (fixed-window) mengizinkan hingga 2× kuota di sekitar batas
+window; (2) kuota dicek SESUDAH `apiKeyService.authenticate` (satu query database + penulisan `lastUsedAt`), jadi request yang
+melewati kuota tetap membebani database — pertimbangan yang sama dengan temuan T1.
+
 ## Hubungan dengan item 2.11 (Rate limit per-tier/plan) — SUDAH dikerjakan
 
 Kuota per API key sekarang bergantung pada plan tenant pemilik key
