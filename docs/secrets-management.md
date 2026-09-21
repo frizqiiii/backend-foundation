@@ -29,6 +29,36 @@ berhenti exit code 1 **tanpa menyentuh `.env` sama sekali**. Karena
 menghentikan seluruh proses deploy SEBELUM `pm2 reload` sempat jalan
 dengan `.env` yang basi/tidak lengkap.
 
+## Temuan audit T17: script sync menulis secret dengan salah dan tidak aman (sudah diperbaiki)
+
+Audit `scripts/sync-secrets-from-vault.js` dengan menjalankannya sungguhan (script asli, klien `node-vault` asli, server
+tiruan KV v2, hasilnya dibaca ulang dengan `dotenv` v16, parser yang dipakai aplikasi) menemukan empat masalah. Verifikasi
+15/15 di bagian bawah hanya memakai nilai sederhana, sehingga tidak menyentuh ini.
+
+1. **Nilai berisi `"` atau `\` berubah diam-diam.** Script memakai `JSON.stringify`, padahal `dotenv` v16 hanya mengekspansi
+   `\n` dan `\r` di dalam kutip ganda; `\"` dan `\\` tidak di-unescape. `pa"ss` terbaca `pa\"ss` dan `a\b` terbaca `a\\b`
+   (2 dari 10 nilai uji), tanpa error apa pun saat sync. Password database atau token dengan karakter itu akan gagal
+   di runtime, dan penyebabnya sulit dilacak karena Vault sendiri benar.
+   **Perbaikan:** kutip tunggal (literal murni, tanpa escape dan interpolasi, di `dotenv` maupun `env_file` Compose)
+   untuk semua nilai tanpa `'`; nilai dengan `'` memakai kutip ganda hanya bila tidak butuh escape/interpolasi; kombinasi
+   yang tidak bisa ditulis benar di kedua parser **ditolak** (fail-closed), bukan ditulis salah.
+2. **`.env` dibuat dengan izin 0644** (`umask 022`), terbaca semua user di VPS. **Perbaikan:** izin `0600`, juga untuk `.env`
+   lama yang diganti.
+3. **Nama key dari Vault ditulis apa adanya**: key berisi newline menyuntikkan baris baru (key `FOO\nNODE_ENV` menghasilkan
+   `NODE_ENV="production"` yang dibaca `dotenv`). Penulis Vault bisa dipercaya, tetapi key yang salah ketik atau pipeline CI
+   yang menulis ke Vault tidak seharusnya bisa mengubah variabel lain. **Perbaikan:** nama key harus
+   `^[A-Za-z_][A-Za-z0-9_]*$`, kalau tidak sync berhenti dan `.env` tidak disentuh.
+4. **Penulisan tidak atomik** (`writeFileSync` memotong file lalu menulis): proses yang mati di tengah jalan meninggalkan
+   `.env` terpotong, bertentangan dengan janji fail-closed di atas. **Perbaikan:** tulis ke file sementara di direktori yang
+   sama lalu `rename`.
+
+Tambahan: peringatan (bukan penolakan) bila `VAULT_ADDR` memakai `http://` ke host non-lokal, karena `VAULT_TOKEN` dan
+secret terkirim tanpa enkripsi.
+
+**Batas yang tetap jujur:** perilaku parser `env_file` Docker Compose TIDAK diuji di sini (tidak ada Docker). Pemilihan kutip
+tunggal didasarkan pada spesifikasi Compose (nilai berkutip tunggal literal, tanpa interpolasi), bukan pada percobaan.
+Verifikasi terhadap Vault sungguhan tetap tugasmu (lihat "Verifikasi terhadap Vault ASLI").
+
 ## Batasan jujur — Vault yang diuji di sini BUKAN Vault asli
 
 `releases.hashicorp.com` (satu-satunya sumber binary resmi Vault)

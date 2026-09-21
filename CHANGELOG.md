@@ -60,6 +60,10 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   `.github/dependabot.yml` (ekosistem `github-actions`) menjaga pin tetap diperbarui lewat PR.
 
 ### Diperbaiki
+- **Sinkronisasi secret dari Vault kini menulis `.env` dengan benar dan aman** (temuan T17): nilai berisi `"` atau `\`
+  sebelumnya berubah diam-diam (terukur: 2 dari 10 nilai uji), `.env` dibuat berizin 0644, nama key berisi newline
+  menyuntikkan baris `.env`, dan penulisan tidak atomik. Kini nilai di-encode aman (atau ditolak), izin 0600, key
+  divalidasi, penulisan atomik. Lihat `docs/secrets-management.md`.
 - **Kode tukar dan `state` SSO kini benar-benar sekali-pakai** (temuan T16): pola `get` lalu `del` membuat permintaan
   bersamaan sama-sama menerima token (terukur di Redis 7 sungguhan: 20 dari 20 panggilan bersamaan berhasil). Kini
   memakai `MULTI/GET/DEL/EXEC` atomik (tepat 1 dari 50). Hasil audit lengkap dan temuan yang masih terbuka
