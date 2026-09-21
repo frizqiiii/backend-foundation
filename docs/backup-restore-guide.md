@@ -21,6 +21,45 @@ Ini adalah temuan audit yang SENGAJA didokumentasikan apa adanya,
 bukan disatukan diam-diam — menyatukan keduanya adalah keputusan
 arsitektur yang perlu ditinjau terpisah dari upgrade dokumentasi ini.
 
+## ⚠️ WAJIB: role backup harus mem-bypass Row-Level Security (temuan T19)
+
+Tabel `products`, `events`, `api_keys`, `webhook_endpoints`, dan `export_jobs` memakai `FORCE ROW LEVEL SECURITY`. Role
+aplikasi (`DATABASE_URL`) TUNDUK pada RLS, sehingga:
+
+- `pg_dump` dengan role aplikasi **gagal**: `query would be affected by row-level security policy for table "api_keys"`.
+- Jalan pintas yang tampak masuk akal, `pg_dump --enable-row-security`, **berhasil tetapi menghasilkan backup KOSONG** untuk
+  semua tabel itu. Sebelum T19, skrip verifikasi lalu menyatakannya "TERVERIFIKASI valid" karena metadata (dihitung oleh
+  role yang sama) juga mencatat 0. Terbukti di PostgreSQL 16 sungguhan: sumber punya 1 baris `products`, backup dan
+  hasil restore 0, verifikasi lulus.
+
+**Buat role khusus backup** (sekali, oleh superuser), lalu isi `BACKUP_DATABASE_URL`:
+
+```sql
+CREATE ROLE backup_role LOGIN PASSWORD '<password-kuat>' NOSUPERUSER BYPASSRLS;
+GRANT pg_read_all_data TO backup_role;   -- PostgreSQL 14+: SELECT pada semua tabel
+```
+
+```bash
+BACKUP_DATABASE_URL="postgresql://backup_role:<password>@host:5432/app_db" ./scripts/backup-db.sh
+```
+
+`backup-db.sh` sekarang memeriksa role itu SEBELUM membuat backup dan berhenti dengan pesan yang jelas kalau role-nya
+tunduk pada RLS. Tanpa `BACKUP_DATABASE_URL`, skrip memakai `DATABASE_URL` dari `.env` dan menerapkan pemeriksaan yang sama.
+`verify-backup.sh` dan `restore-db.sh` juga butuh role yang bisa menulis semua tabel (superuser atau `BYPASSRLS` yang
+memiliki objeknya); `verify-backup.sh` menghitung baris dengan `row_security=off`, jadi role yang tunduk RLS menghasilkan
+`[GAGAL]` yang terlihat, bukan angka 0 palsu.
+
+Perubahan lain pada skrip DR (T19): file backup dan `.meta` berizin `0600` (direktori `0700`; sebelumnya `0644`/`0755`,
+terbaca semua user di VPS); metadata mencakup `api_keys`, `webhook_endpoints`, `export_jobs`; `verify-backup.sh` menolak
+`VERIFY_DATABASE_URL` yang menunjuk ke database YANG SAMA dengan production walau ejaan URL-nya berbeda (sebelumnya hanya
+pembanding string: `localhost` vs `127.0.0.1` lolos, `pg_restore --clean` menimpa production dan 5 baris data baru hilang);
+`restore-db.sh` tidak lagi mencetak password di prompt konfirmasi.
+
+**Batas yang masih ada (tidak diubah):** (1) `pg_dump --dbname="$URL"` menaruh password di argumen proses, terlihat lewat `ps`
+oleh user lokal selama dump berjalan; gunakan `~/.pgpass`/`PGPASSFILE` bila hostnya dibagi. (2) Angka di `.meta` dihitung
+SETELAH dump selesai, bukan dari snapshot yang sama, jadi pada database yang aktif menulis bisa berbeda tipis dari isi dump
+dan memicu `[GAGAL]` palsu. (3) `ENV_FILE` berakhir baris CRLF akan merusak URL yang dibaca skrip (edit `.env` di Linux).
+
 ## Backup Manual
 
 ```bash

@@ -60,6 +60,11 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   `.github/dependabot.yml` (ekosistem `github-actions`) menjaga pin tetap diperbarui lewat PR.
 
 ### Diperbaiki
+- **Skrip Disaster Recovery kini benar di bawah Row-Level Security** (temuan T19): `backup-db.sh` gagal dengan role aplikasi
+  dan jalan pintas `--enable-row-security` menghasilkan backup KOSONG yang dinyatakan valid oleh `verify-backup.sh`;
+  `verify-backup.sh` bisa menimpa production lewat URL beda ejaan (5 baris data hilang dalam uji); file backup berizin
+  0644. Kini: role backup wajib `BYPASSRLS`/superuser (`BACKUP_DATABASE_URL`), pengecekan identitas database, verifikasi
+  `row_security=off` dan mencakup tabel ber-RLS, izin 0600/0700, password tidak dicetak. Lihat `docs/backup-restore-guide.md`.
 - **Kuota API key tidak lagi bisa tersangkut permanen tanpa TTL** (temuan T18): pola `INCR` lalu `EXPIRE` meninggalkan
   kunci tanpa TTL kalau `EXPIRE` gagal sekali (terukur di Redis 7: `ttl = -1`, lalu ditolak selamanya). Kini `MULTI/EXEC`
   atomik `SET NX EX` + `INCR`. Lihat `docs/api-gateway.md`.

@@ -53,8 +53,10 @@ fi
 # (mis. me-restore ke environment staging sebagai bagian CI) yang
 # memang tidak seharusnya berhenti menunggu input interaktif.
 if [ "$SKIP_CONFIRMATION" != "--yes" ]; then
+  # Temuan T19 — password TIDAK dicetak ke layar/scrollback/log terminal: `user:password@host` -> `user:***@host`.
+  MASKED_DATABASE_URL=$(printf '%s' "$DATABASE_URL" | sed -E 's#(://[^:/@]+):[^@]*@#\1:***@#')
   echo "PERINGATAN: Ini akan MENIMPA seluruh data di database tujuan:"
-  echo "  $DATABASE_URL"
+  echo "  $MASKED_DATABASE_URL"
   echo "dengan isi dari:"
   echo "  $BACKUP_FILE"
   read -r -p "Ketik 'yes' untuk melanjutkan: " CONFIRMATION
