@@ -1,4 +1,5 @@
-import type { PrismaClient, User } from '@prisma/client';
+import type { Prisma, PrismaClient, User } from '@prisma/client';
+import { withRlsBypass } from '../../shared/tenant/tenant-context';
 
 /**
  * Repository Layer untuk Data Retention & GDPR erasure (Fase 2).
@@ -19,8 +20,23 @@ import type { PrismaClient, User } from '@prisma/client';
 export class PrivacyRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
+  /**
+   * Temuan T15 — dijalankan lewat `withRlsBypass` (satu transaksi, `app.bypass_rls = 'on'`), BUKAN
+   * `$transaction` biasa.
+   *
+   * Kenapa: `api_keys` (dan `products`, `events`, `webhook_endpoints`, `export_jobs`) memakai `FORCE
+   * ROW LEVEL SECURITY`. Transaksi baru tanpa `app.tenant_id` atau `app.bypass_rls` melihat NOL baris,
+   * jadi `apiKey.deleteMany({ where: { userId } })` "berhasil" menghapus 0 baris TANPA error — API key
+   * milik user yang di-erasure tetap ada. Terbukti di PostgreSQL 16 sungguhan (`DELETE 0` tanpa bypass,
+   * `DELETE 1` dengan bypass). Request HTTP tidak menolong: konteks tenant hidup di transaksi milik
+   * middleware, sedangkan repository ini membuka transaksi/koneksi sendiri; job harian bahkan tidak
+   * punya konteks request sama sekali.
+   *
+   * Pemakaian `withRlsBypass` di sini SAH: erasure memang lintas-tenant (satu user bisa punya kunci di
+   * beberapa tenant) dan dipicu sistem/admin. Tercatat di `docs/data-retention-policy.md`.
+   */
   async eraseUserData(userId: string): Promise<User> {
-    return this.prisma.$transaction(async (tx) => {
+    return withRlsBypass(this.prisma, async (tx) => {
       const erasedUser = await tx.user.update({
         where: { id: userId },
         data: {
@@ -60,7 +76,35 @@ export class PrivacyRepository {
       // tidak pernah bisa ditemukan lagi lewat aplikasi").
       await tx.fileUpload.deleteMany({ where: { userId } });
 
+      // Temuan T15 — pengaman "gagal keras": `deleteMany` tidak pernah melempar error kalau yang
+      // terhapus 0 baris, dan itulah persisnya cara kegagalan RLS tadi bersembunyi. Hitung sisa baris;
+      // kalau ada, lempar error supaya SELURUH transaksi (termasuk scrub `User` di atas) di-rollback
+      // dan kegagalannya terlihat (500 untuk self-service, job gagal + log untuk retensi otomatis),
+      // bukan "erasure berhasil" yang diam-diam tidak tuntas.
+      await this.assertNothingLeft(tx, userId);
+
       return erasedUser;
     });
+  }
+
+  private async assertNothingLeft(tx: Prisma.TransactionClient, userId: string): Promise<void> {
+    const remaining: Array<[string, number]> = [
+      ['oAuthAccount', await tx.oAuthAccount.count({ where: { userId } })],
+      ['ssoIdentity', await tx.ssoIdentity.count({ where: { userId } })],
+      ['refreshToken', await tx.refreshToken.count({ where: { userId } })],
+      ['mfaRecoveryCode', await tx.mfaRecoveryCode.count({ where: { userId } })],
+      ['emailVerificationToken', await tx.emailVerificationToken.count({ where: { userId } })],
+      ['passwordResetToken', await tx.passwordResetToken.count({ where: { userId } })],
+      ['apiKey', await tx.apiKey.count({ where: { userId } })],
+      ['fileUpload', await tx.fileUpload.count({ where: { userId } })],
+    ];
+    const leftovers = remaining.filter(([, count]) => count > 0);
+    if (leftovers.length > 0) {
+      throw new Error(
+        `PrivacyRepository: erasure tidak tuntas untuk user ${userId} — masih ada baris di ` +
+          `${leftovers.map(([table, count]) => `${table} (${count})`).join(', ')}. ` +
+          'Transaksi dibatalkan (tidak ada yang berubah).'
+      );
+    }
   }
 }

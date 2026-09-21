@@ -10,7 +10,7 @@ import baseConfig from './jest.config';
  */
 const config: Config = {
   ...baseConfig,
-  testMatch: ['**/rls-bypass.e2e.spec.ts'],
+  testMatch: ['**/rls-bypass.e2e.spec.ts', '**/privacy-erasure-rls.e2e.spec.ts'],
   testPathIgnorePatterns: ['/node_modules/'],
   setupFiles: ['<rootDir>/jest.setup.rls-e2e.ts'],
   collectCoverage: false,

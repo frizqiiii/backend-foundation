@@ -6,6 +6,7 @@ function createMockPrisma(overrides: Record<string, unknown> = {}) {
   return {
     user: {
       findFirst: jest.fn(),
+      findUnique: jest.fn(),
       findMany: jest.fn(),
       count: jest.fn(),
       create: jest.fn(),
@@ -43,6 +44,17 @@ describe('UserRepository', () => {
     expect(prisma.user.findFirst).toHaveBeenCalledWith({
       where: { id: 'u1', deletedAt: null },
     });
+  });
+
+  it('temuan T15 — findByIdIncludingDeleted TIDAK memfilter deletedAt (khusus erasure/retensi), lookup by id saja', async () => {
+    const prisma = createMockPrisma();
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue({ id: 'u1', deletedAt: new Date() });
+    const repository = new UserRepository(prisma);
+
+    const result = await repository.findByIdIncludingDeleted('u1');
+
+    expect(prisma.user.findUnique).toHaveBeenCalledWith({ where: { id: 'u1' } });
+    expect(result).toMatchObject({ id: 'u1' });
   });
 
   describe('findMany', () => {

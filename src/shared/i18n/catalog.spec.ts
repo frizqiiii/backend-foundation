@@ -34,6 +34,10 @@ const INTENTIONALLY_UNTRANSLATED_PREFIXES: ReadonlyArray<readonly [string, strin
   ['Audit log hash chain', 'log/error job terjadwal internal'],
   ['Format ciphertext', 'error internal enkripsi'],
   ['Tenant context tidak aktif', 'error pemrograman internal, disamarkan di production'],
+  [
+    'PrivacyRepository:',
+    'error invariant internal (pengaman erasure T15), disamarkan sebagai 500 di production',
+  ],
 ];
 
 /** File yang pesannya internal (log job, provider pihak ketiga, health, antrean) — tidak sampai ke pengguna API. */

@@ -58,6 +58,19 @@ export class UserRepository {
   }
 
   /**
+   * Temuan T15 — TANPA filter `deletedAt`, KHUSUS untuk erasure/retensi data (`PrivacyService.eraseForUser`).
+   *
+   * `findById` di atas SENGAJA menyembunyikan akun soft-deleted (jalur auth harus memperlakukan
+   * akun terhapus sebagai tidak ada). Tetapi job retensi (`enforce-data-retention`) justru menargetkan
+   * PERSIS akun-akun soft-deleted (`findSoftDeletedPastRetentionPeriod`); kalau `eraseForUser`
+   * mencari lewat `findById`, setiap kandidat dianggap "tidak ditemukan" dan job gagal tiap malam
+   * tanpa pernah meng-erasure satu akun pun. JANGAN dipakai di jalur autentikasi/otorisasi.
+   */
+  async findByIdIncludingDeleted(id: string): Promise<User | null> {
+    return this.prisma.user.findUnique({ where: { id } });
+  }
+
+  /**
    * Dipaginasi (Phase 3 — sebelumnya mengambil SELURUH baris user
    * tanpa batas sama sekali, pola yang sama seperti masalah lama di
    * `ProductRepository.findAll` sebelum Phase 8). `findMany` + `count`

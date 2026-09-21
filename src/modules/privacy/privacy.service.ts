@@ -55,7 +55,9 @@ export class PrivacyService {
 
   /** Admin-triggered — dipanggil job retensi otomatis MAUPUN endpoint admin manual. */
   async eraseForUser(userId: string): Promise<ErasureResult> {
-    const user = await this.userRepository.findById(userId);
+    // Temuan T15 — HARUS `findByIdIncludingDeleted`: target utama jalur ini (job retensi 30 hari)
+    // adalah akun yang SUDAH soft-deleted, yang disembunyikan oleh `findById`.
+    const user = await this.userRepository.findByIdIncludingDeleted(userId);
     if (!user) {
       throw new NotFoundError('User tidak ditemukan');
     }
