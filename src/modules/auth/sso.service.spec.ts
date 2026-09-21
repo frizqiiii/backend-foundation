@@ -23,9 +23,30 @@ import {
  */
 jest.mock('openid-client');
 
+// Temuan T16 — `state` dan kode tukar diambil lewat `MULTI GET/DEL EXEC` (atomik), bukan `get` lalu `del`.
+const mockTakeChain = {
+  get: jest.fn(),
+  del: jest.fn(),
+  exec: jest.fn(),
+};
 jest.mock('../../shared/config/redis', () => ({
-  redisClient: { get: jest.fn(), set: jest.fn(), del: jest.fn() },
+  redisClient: {
+    get: jest.fn(),
+    set: jest.fn(),
+    del: jest.fn(),
+    multi: jest.fn(() => mockTakeChain),
+  },
 }));
+
+/** `EXEC` mengembalikan `[[err, hasilGET], [err, hasilDEL]]`; `null` = kunci tidak ada. */
+function mockTake(value: string | null): void {
+  mockTakeChain.get.mockReturnValue(mockTakeChain);
+  mockTakeChain.del.mockReturnValue(mockTakeChain);
+  mockTakeChain.exec.mockResolvedValue([
+    [null, value],
+    [null, value === null ? 0 : 1],
+  ]);
+}
 
 const MockedIssuer = Issuer as jest.Mocked<typeof Issuer>;
 const mockedGenerators = generators as jest.Mocked<typeof generators>;
@@ -33,6 +54,7 @@ const mockedRedis = redisClient as unknown as {
   get: jest.Mock;
   set: jest.Mock;
   del: jest.Mock;
+  multi: jest.Mock;
 };
 
 const mockAuthorizationUrl = jest.fn();
@@ -197,7 +219,7 @@ describe('SsoService', () => {
         })
       ).rejects.toThrow(UnauthorizedError);
       // Tidak boleh sempat membaca Redis sama sekali kalau IdP sudah menolak duluan.
-      expect(mockedRedis.get).not.toHaveBeenCalled();
+      expect(mockedRedis.multi).not.toHaveBeenCalled();
     });
 
     it('menolak kalau parameter code tidak ada', async () => {
@@ -207,14 +229,14 @@ describe('SsoService', () => {
     });
 
     it('menolak kalau state tidak ditemukan di Redis (kedaluwarsa/sudah dipakai/palsu)', async () => {
-      mockedRedis.get.mockResolvedValue(null);
+      mockTake(null);
       await expect(ssoService.handleCallback('acme', validQuery)).rejects.toThrow(
         UnauthorizedError
       );
     });
 
     it('MENGHAPUS state dari Redis segera setelah dibaca (single-use), sebelum lanjut ke langkah berikutnya', async () => {
-      mockedRedis.get.mockResolvedValue(validStatePayload);
+      mockTake(validStatePayload);
       mockCallback.mockResolvedValue({
         claims: () => ({ sub: 'sub-1', email: 'budi@acme.com', name: 'Budi' }),
       });
@@ -224,20 +246,23 @@ describe('SsoService', () => {
 
       await ssoService.handleCallback('acme', validQuery);
 
-      expect(mockedRedis.del).toHaveBeenCalledWith('sso:state:mock-state');
+      expect(mockTakeChain.get).toHaveBeenCalledWith('sso:state:mock-state');
+      expect(mockTakeChain.del).toHaveBeenCalledWith('sso:state:mock-state');
+      expect(mockTakeChain.exec).toHaveBeenCalledTimes(1);
+      // Bukan lagi `get` lalu `del` terpisah (tidak atomik).
+      expect(mockedRedis.get).not.toHaveBeenCalled();
+      expect(mockedRedis.del).not.toHaveBeenCalled();
     });
 
     it('menolak kalau state ditemukan tapi tenantId-nya BEDA dari tenant di path callback (mencegah state tenant A dipakai di callback tenant B)', async () => {
-      mockedRedis.get.mockResolvedValue(
-        JSON.stringify({ tenantId: 'tenant-LAIN', nonce: 'n', codeVerifier: 'v' })
-      );
+      mockTake(JSON.stringify({ tenantId: 'tenant-LAIN', nonce: 'n', codeVerifier: 'v' }));
       await expect(ssoService.handleCallback('acme', validQuery)).rejects.toThrow(
         UnauthorizedError
       );
     });
 
     it('menolak kalau email dari klaim OIDC BUKAN di domain yang diizinkan tenant ini', async () => {
-      mockedRedis.get.mockResolvedValue(validStatePayload);
+      mockTake(validStatePayload);
       mockCallback.mockResolvedValue({
         claims: () => ({ sub: 'sub-1', email: 'orang-luar@gmail.com', name: 'Orang Luar' }),
       });
@@ -247,7 +272,7 @@ describe('SsoService', () => {
     });
 
     it('menolak kalau email SUDAH terdaftar tapi milik tenant LAIN — SSO tidak boleh menautkan lintas-tenant', async () => {
-      mockedRedis.get.mockResolvedValue(validStatePayload);
+      mockTake(validStatePayload);
       mockCallback.mockResolvedValue({
         claims: () => ({ sub: 'sub-baru', email: 'budi@acme.com', name: 'Budi' }),
       });
@@ -262,7 +287,7 @@ describe('SsoService', () => {
     });
 
     it('JIT-provision: membuat User BARU + SsoIdentity kalau belum pernah login lewat SSO ini maupun terdaftar manual', async () => {
-      mockedRedis.get.mockResolvedValue(validStatePayload);
+      mockTake(validStatePayload);
       mockCallback.mockResolvedValue({
         claims: () => ({ sub: 'sub-baru', email: 'budi@acme.com', name: 'Budi' }),
       });
@@ -304,7 +329,7 @@ describe('SsoService', () => {
     });
 
     it('login SSO berikutnya (SsoIdentity sudah ada): TIDAK membuat User baru, langsung pakai user yang sudah tertaut', async () => {
-      mockedRedis.get.mockResolvedValue(validStatePayload);
+      mockTake(validStatePayload);
       mockCallback.mockResolvedValue({
         claims: () => ({ sub: 'sub-lama', email: 'budi@acme.com', name: 'Budi' }),
       });
@@ -330,7 +355,7 @@ describe('SsoService', () => {
   // ---------------------------------------------------------------
   describe('consume', () => {
     it('menolak kode yang tidak ditemukan di Redis (invalid/sudah dipakai/kedaluwarsa)', async () => {
-      mockedRedis.get.mockResolvedValue(null);
+      mockTake(null);
       await expect(ssoService.consume('kode-acak')).rejects.toThrow(UnauthorizedError);
     });
 
@@ -340,12 +365,76 @@ describe('SsoService', () => {
         refreshToken: 'b',
         user: { id: 'u1', email: 'x@acme.com', name: 'X', createdAt: new Date().toISOString() },
       };
-      mockedRedis.get.mockResolvedValue(JSON.stringify(stored));
+      mockTake(JSON.stringify(stored));
 
       const result = await ssoService.consume('kode-valid');
 
       expect(result).toEqual(stored);
-      expect(mockedRedis.del).toHaveBeenCalledWith('sso:exchange:kode-valid');
+      expect(mockTakeChain.get).toHaveBeenCalledWith('sso:exchange:kode-valid');
+      expect(mockTakeChain.del).toHaveBeenCalledWith('sso:exchange:kode-valid');
+      expect(mockedRedis.del).not.toHaveBeenCalled();
+    });
+
+    describe('temuan T16 — single-use tetap berlaku di bawah permintaan BERSAMAAN', () => {
+      /**
+       * Redis tiruan yang meniru sifat yang relevan: setiap perintah terpisah (`get`, `del`) membutuhkan satu
+       * putaran event-loop, sehingga permintaan bersamaan saling menyisip di antara `get` dan `del`
+       * (persis yang terjadi ke Redis sungguhan); sedangkan `MULTI/EXEC` dieksekusi utuh tanpa disisipi.
+       * Modelnya dicocokkan dengan Redis 7 sungguhan: pola `get` lalu `del` menghasilkan 20 dari 20 penerima.
+       */
+      function installInterleavingRedis(initial: Record<string, string>): void {
+        const store = new Map(Object.entries(initial));
+        const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+        mockedRedis.get.mockImplementation(async (key: string) => {
+          await tick();
+          return store.get(key) ?? null;
+        });
+        mockedRedis.del.mockImplementation(async (key: string) => {
+          await tick();
+          return store.delete(key) ? 1 : 0;
+        });
+        mockedRedis.multi.mockImplementation(() => {
+          const ops: string[] = [];
+          const chain = {
+            get: (key: string) => {
+              ops.push(key);
+              return chain;
+            },
+            del: () => chain,
+            exec: async () => {
+              await tick();
+              const key = ops[0];
+              const value = store.get(key) ?? null;
+              store.delete(key);
+              return [
+                [null, value],
+                [null, value === null ? 0 : 1],
+              ];
+            },
+          };
+          return chain;
+        });
+      }
+
+      it.each([2, 5, 20])(
+        '%i consume() bersamaan untuk SATU kode: TEPAT satu yang menerima token, sisanya ditolak',
+        async (concurrency) => {
+          const stored = { accessToken: 'a', refreshToken: 'b', user: { id: 'u1' } };
+          installInterleavingRedis({ 'sso:exchange:kode-bersama': JSON.stringify(stored) });
+
+          const results = await Promise.allSettled(
+            Array.from({ length: concurrency }, () => ssoService.consume('kode-bersama'))
+          );
+
+          const fulfilled = results.filter((r) => r.status === 'fulfilled');
+          const rejected = results.filter((r) => r.status === 'rejected');
+          expect(fulfilled).toHaveLength(1);
+          expect(rejected).toHaveLength(concurrency - 1);
+          for (const r of rejected) {
+            expect((r as PromiseRejectedResult).reason).toBeInstanceOf(UnauthorizedError);
+          }
+        }
+      );
     });
   });
 });

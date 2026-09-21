@@ -181,18 +181,15 @@ export class SsoService {
       throw new BadRequestError('Parameter code tidak ada pada callback SSO.');
     }
 
-    const stateKey = `sso:state:${query.state}`;
-    const rawState = await redis.get(stateKey);
+    // Single-use — dibaca DAN dihapus dalam SATU operasi atomik (`takeOnce`), SEGERA setelah ditemukan
+    // (terpakai atau gagal di langkah berikutnya), bukan menunggu seluruh alur sukses. Mencegah `state`
+    // yang sama dipakai dua kali walau percobaan pertama gagal di tengah jalan.
+    const rawState = await this.takeOnce(redis, `sso:state:${query.state}`);
     if (!rawState) {
       throw new UnauthorizedError(
         'Sesi login SSO ini sudah kedaluwarsa, sudah dipakai, atau tidak valid — silakan login ulang.'
       );
     }
-    // Single-use — dihapus SEGERA setelah ditemukan (kepakai atau
-    // gagal di langkah berikutnya), bukan menunggu sampai seluruh
-    // alur sukses. Mencegah `state` yang sama dipakai dua kali walau
-    // percobaan pertama gagal di tengah jalan.
-    await redis.del(stateKey);
 
     const stateData = JSON.parse(rawState) as {
       tenantId: string;
@@ -261,13 +258,35 @@ export class SsoService {
   /** Ditukar frontend segera setelah redirect callback diterima. */
   async consume(code: string): Promise<AuthResponseDto> {
     const redis = this.requireRedis();
-    const key = `sso:exchange:${code}`;
-    const raw = await redis.get(key);
+    const raw = await this.takeOnce(redis, `sso:exchange:${code}`);
     if (!raw) {
       throw new UnauthorizedError('Kode tukar SSO tidak valid, sudah dipakai, atau kedaluwarsa.');
     }
-    await redis.del(key); // single-use
     return JSON.parse(raw) as AuthResponseDto;
+  }
+
+  /**
+   * Temuan T16 — ambil-dan-hapus ATOMIK (`MULTI` ... `GET`, `DEL` ... `EXEC`).
+   *
+   * Pola lama `await redis.get(key)` lalu `await redis.del(key)` BUKAN single-use: keduanya dua
+   * perintah terpisah, jadi permintaan yang bersamaan sama-sama lolos `GET` sebelum ada yang sempat
+   * `DEL`. Terbukti di Redis 7 sungguhan dengan `SsoService.consume` asli: 2, 5, dan 20 panggilan
+   * bersamaan untuk SATU kode tukar semuanya menerima token (2/2, 5/5, 20/20). Kode tukar berada di URL
+   * redirect ke frontend (riwayat browser, log proxy), jadi penyerang yang melihatnya bisa berlomba
+   * dengan frontend yang sah. Di dalam `MULTI/EXEC` hanya SATU pemanggil yang menerima nilainya; yang
+   * lain menerima `null`. Berlaku juga untuk `Cluster` (satu kunci = satu slot). Tidak butuh `GETDEL`
+   * (Redis >= 6.2), jadi jalan di versi Redis mana pun.
+   */
+  private async takeOnce(
+    redis: NonNullable<typeof redisClient>,
+    key: string
+  ): Promise<string | null> {
+    const results = await redis.multi().get(key).del(key).exec();
+    const first = results?.[0];
+    if (!first || first[0]) {
+      return null;
+    }
+    return (first[1] as string | null) ?? null;
   }
 
   private requireRedis(): NonNullable<typeof redisClient> {

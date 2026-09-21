@@ -60,6 +60,15 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   `.github/dependabot.yml` (ekosistem `github-actions`) menjaga pin tetap diperbarui lewat PR.
 
 ### Diperbaiki
+- **Kode tukar dan `state` SSO kini benar-benar sekali-pakai** (temuan T16): pola `get` lalu `del` membuat permintaan
+  bersamaan sama-sama menerima token (terukur di Redis 7 sungguhan: 20 dari 20 panggilan bersamaan berhasil). Kini
+  memakai `MULTI/GET/DEL/EXEC` atomik (tepat 1 dari 50). Hasil audit lengkap dan temuan yang masih terbuka
+  (login CSRF, SSRF `issuerUrl`, `email_verified`) ada di `docs/sso-security-audit.md`.
+- **Erasure data pribadi (item 2.3) kini benar-benar bekerja** (temuan T15). Dua cacat yang lolos dari unit test:
+  (1) `PrivacyRepository.eraseUserData` menghapus 0 baris `api_keys` secara diam-diam karena `FORCE ROW LEVEL SECURITY`
+  — kini memakai `withRlsBypass` dan gagal keras (rollback) kalau ada sisa baris; (2) job retensi 30 hari selalu gagal
+  karena `eraseForUser` mencari akun soft-deleted lewat `findById` (memfilter `deletedAt: null`) — kini memakai
+  `UserRepository.findByIdIncludingDeleted`. Lihat `docs/data-retention-policy.md`.
 - **URL callback SSO dikunci sebagai kontrak eksternal** (temuan T7): test `app.sso-callback-contract.integration.spec.ts`
   memastikan path yang dikirim ke identity provider (`/api/v1/auth/sso/:tenantSlug/callback`) tidak berubah dan
   benar-benar dilayani. Mengubah/mematikannya akan membuat semua tenant SSO gagal login. Keputusan sunset v1
