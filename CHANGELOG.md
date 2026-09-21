@@ -60,6 +60,9 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   `.github/dependabot.yml` (ekosistem `github-actions`) menjaga pin tetap diperbarui lewat PR.
 
 ### Diperbaiki
+- **Kuota API key tidak lagi bisa tersangkut permanen tanpa TTL** (temuan T18): pola `INCR` lalu `EXPIRE` meninggalkan
+  kunci tanpa TTL kalau `EXPIRE` gagal sekali (terukur di Redis 7: `ttl = -1`, lalu ditolak selamanya). Kini `MULTI/EXEC`
+  atomik `SET NX EX` + `INCR`. Lihat `docs/api-gateway.md`.
 - **Sinkronisasi secret dari Vault kini menulis `.env` dengan benar dan aman** (temuan T17): nilai berisi `"` atau `\`
   sebelumnya berubah diam-diam (terukur: 2 dari 10 nilai uji), `.env` dibuat berizin 0644, nama key berisi newline
   menyuntikkan baris `.env`, dan penulisan tidak atomik. Kini nilai di-encode aman (atau ditolak), izin 0600, key

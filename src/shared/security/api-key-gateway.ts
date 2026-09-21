@@ -59,10 +59,25 @@ export async function enforcePartnerApiGatewayLimit(
   const key = gatewayKey(apiKeyId);
   let count: number;
   try {
-    count = await redisClient.incr(key);
-    if (count === 1) {
-      await redisClient.expire(key, WINDOW_SECONDS);
+    // Temuan T18 — TTL dan hitungan diset dalam SATU `MULTI/EXEC` atomik: `SET key 0 EX 60 NX` (hanya
+    // membuat kunci + TTL bila belum ada; no-op bila sudah ada, jadi window TIDAK bergeser) lalu `INCR`.
+    //
+    // Pola lama `INCR` lalu `EXPIRE` (hanya bila hitungan == 1) adalah dua perintah terpisah. Kalau
+    // `EXPIRE` gagal sekali saja (koneksi putus, failover Redis, proses mati di antara keduanya), kunci
+    // hidup TANPA TTL: hitungan terus naik selamanya, tidak pernah `== 1` lagi sehingga TTL tidak pernah
+    // diset ulang, dan begitu melewati batas API key itu ditolak PERMANEN sampai ada yang menghapus
+    // kuncinya manual. Terbukti di Redis 7 sungguhan dengan `enforcePartnerApiGatewayLimit` asli dan
+    // kegagalan `EXPIRE` yang disuntikkan sekali: `ttl = -1` dan hitungan 299 -> lolos, DITOLAK, DITOLAK.
+    const results = await redisClient
+      .multi()
+      .set(key, 0, 'EX', WINDOW_SECONDS, 'NX')
+      .incr(key)
+      .exec();
+    const incrResult = results?.[1];
+    if (!incrResult || incrResult[0]) {
+      throw incrResult?.[0] ?? new Error('MULTI/EXEC tidak mengembalikan hasil INCR');
     }
+    count = Number(incrResult[1]);
   } catch (error) {
     logger.warn(
       { err: error, apiKeyId },
