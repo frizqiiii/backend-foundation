@@ -29,6 +29,7 @@ describe('TenantService', () => {
       findMany: jest.fn(),
       create: jest.fn(),
       updatePlan: jest.fn(),
+      updateStatus: jest.fn(),
       softDelete: jest.fn(),
     } as unknown as jest.Mocked<TenantRepository>;
 
@@ -152,6 +153,61 @@ describe('TenantService', () => {
       tenantRepository.findBySlug.mockResolvedValue({ ...activeTenant, status: 'SUSPENDED' });
 
       await expect(tenantService.resolveActiveTenantBySlug('acme')).rejects.toThrow(ForbiddenError);
+    });
+  });
+
+  describe('updateStatus (T3)', () => {
+    it('melempar NotFoundError kalau tenant tidak ada, TANPA menulis apa pun', async () => {
+      tenantRepository.findById.mockResolvedValue(null);
+
+      await expect(tenantService.updateStatus('hilang', 'SUSPENDED')).rejects.toThrow(
+        NotFoundError
+      );
+      expect(tenantRepository.updateStatus).not.toHaveBeenCalled();
+    });
+
+    it('menyimpan status baru lewat repository dan mengembalikan tenant yang sudah diperbarui', async () => {
+      const suspended = { ...activeTenant, status: 'SUSPENDED' as const };
+      tenantRepository.findById.mockResolvedValue(activeTenant);
+      tenantRepository.updateStatus.mockResolvedValue(suspended);
+
+      const result = await tenantService.updateStatus('tenant-1', 'SUSPENDED');
+
+      expect(tenantRepository.updateStatus).toHaveBeenCalledWith('tenant-1', 'SUSPENDED');
+      expect(result.tenant).toEqual(suspended);
+    });
+
+    it('mengembalikan status SEBELUMNYA (dibaca sebelum menulis) supaya controller bisa mencatat "dari -> ke" di audit log — pola sama seperti updatePlan/T2', async () => {
+      tenantRepository.findById.mockResolvedValue({ ...activeTenant, status: 'ACTIVE' as const });
+      tenantRepository.updateStatus.mockResolvedValue({
+        ...activeTenant,
+        status: 'SUSPENDED' as const,
+      });
+
+      const result = await tenantService.updateStatus('tenant-1', 'SUSPENDED');
+
+      expect(result.previousStatus).toBe('ACTIVE');
+      expect(result.tenant.status).toBe('SUSPENDED');
+    });
+  });
+
+  describe('isActiveById (T3 — dipakai jalur API key)', () => {
+    it('mengembalikan true kalau tenant ditemukan dan ACTIVE', async () => {
+      tenantRepository.findById.mockResolvedValue(activeTenant);
+
+      await expect(tenantService.isActiveById('tenant-1')).resolves.toBe(true);
+    });
+
+    it('mengembalikan false kalau tenant SUSPENDED', async () => {
+      tenantRepository.findById.mockResolvedValue({ ...activeTenant, status: 'SUSPENDED' });
+
+      await expect(tenantService.isActiveById('tenant-1')).resolves.toBe(false);
+    });
+
+    it('mengembalikan false (bukan melempar) kalau tenant tidak ditemukan — konsisten dengan resolveActiveTenantBySlug yang tidak membedakan "tidak ada" dari "tidak aktif"', async () => {
+      tenantRepository.findById.mockResolvedValue(null);
+
+      await expect(tenantService.isActiveById('hilang')).resolves.toBe(false);
     });
   });
 });

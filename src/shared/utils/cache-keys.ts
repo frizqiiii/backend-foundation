@@ -47,4 +47,14 @@ export const cacheKeys = {
    * diinvalidasi eksplisit oleh `TenantService.updatePlan`.
    */
   tenantPlanById: (tenantId: string): string => `cache:tenant:plan:${tenantId}`,
+  /**
+   * T3 — status tenant berdasarkan `id`, dipakai `authenticateWithApiKey`
+   * (jalur API key, hanya tahu `ApiKey.tenantId`, sama seperti
+   * `tenantPlanById` di atas — TIDAK BISA pakai cache `tenantBySlug`
+   * yang di-key dari slug). Menyimpan status-nya saja (string kecil),
+   * bukan seluruh baris Tenant. TTL sama, diinvalidasi eksplisit oleh
+   * `TenantService.updateStatus` supaya suspend terasa SEGERA di
+   * jalur API key, bukan menunggu TTL habis.
+   */
+  tenantStatusById: (tenantId: string): string => `cache:tenant:status:${tenantId}`,
 };

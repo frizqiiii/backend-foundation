@@ -21,6 +21,7 @@ describe('TenantController', () => {
       list: jest.fn(),
       create: jest.fn(),
       updatePlan: jest.fn(),
+      updateStatus: jest.fn(),
     } as unknown as jest.Mocked<TenantService>;
     auditService = { logUpdate: jest.fn() } as unknown as jest.Mocked<AuditService>;
     controller = new TenantController(tenantService, auditService);
@@ -150,6 +151,95 @@ describe('TenantController', () => {
         UnauthorizedError
       );
       expect(tenantService.updatePlan).not.toHaveBeenCalled();
+      expect(auditService.logUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateStatus (T3)', () => {
+    function reqFor(body: unknown, user: unknown = { id: 'admin-1' }): Request {
+      return {
+        params: { id: 'tenant-1' },
+        body,
+        user,
+        headers: { 'user-agent': 'jest-agent' },
+        get: (header: string) => (header.toLowerCase() === 'user-agent' ? 'jest-agent' : undefined),
+        ip: '10.0.0.7',
+        socket: { remoteAddress: '10.0.0.7' },
+      } as unknown as Request;
+    }
+
+    it('memvalidasi body, memanggil service dengan id dari URL, membalas 200', async () => {
+      const res = createMockResponse();
+      const tenant = { id: 'tenant-1', status: 'SUSPENDED' };
+      tenantService.updateStatus.mockResolvedValue({
+        tenant,
+        previousStatus: 'ACTIVE',
+      } as never);
+
+      await controller.updateStatus(reqFor({ status: 'SUSPENDED' }), res);
+
+      expect(tenantService.updateStatus).toHaveBeenCalledWith('tenant-1', 'SUSPENDED');
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ data: tenant }));
+    });
+
+    it('mencatat audit UPDATE pada entity Tenant: siapa (userId), dari status apa ke status apa (details) — pola sama seperti updatePlan/T2', async () => {
+      const res = createMockResponse();
+      tenantService.updateStatus.mockResolvedValue({
+        tenant: { id: 'tenant-1', status: 'SUSPENDED' },
+        previousStatus: 'ACTIVE',
+      } as never);
+
+      await controller.updateStatus(reqFor({ status: 'SUSPENDED' }), res);
+
+      expect(auditService.logUpdate).toHaveBeenCalledTimes(1);
+      expect(auditService.logUpdate).toHaveBeenCalledWith(
+        'Tenant',
+        'tenant-1',
+        expect.objectContaining({ userId: 'admin-1', userAgent: 'jest-agent' }),
+        { field: 'status', from: 'ACTIVE', to: 'SUSPENDED' }
+      );
+    });
+
+    it('PATCH yang tidak mengubah nilai (from == to) TETAP dicatat', async () => {
+      const res = createMockResponse();
+      tenantService.updateStatus.mockResolvedValue({
+        tenant: { id: 'tenant-1', status: 'ACTIVE' },
+        previousStatus: 'ACTIVE',
+      } as never);
+
+      await controller.updateStatus(reqFor({ status: 'ACTIVE' }), res);
+
+      expect(auditService.logUpdate).toHaveBeenCalledWith('Tenant', 'tenant-1', expect.anything(), {
+        field: 'status',
+        from: 'ACTIVE',
+        to: 'ACTIVE',
+      });
+    });
+
+    it('status tidak valid: error validasi, service DAN audit TIDAK dipanggil', async () => {
+      const res = createMockResponse();
+
+      await expect(controller.updateStatus(reqFor({ status: 'PAUSED' }), res)).rejects.toThrow();
+      expect(tenantService.updateStatus).not.toHaveBeenCalled();
+      expect(auditService.logUpdate).not.toHaveBeenCalled();
+    });
+
+    it('service gagal (mis. tenant tidak ada): TIDAK ada audit dicatat untuk aksi yang tidak terjadi', async () => {
+      const res = createMockResponse();
+      tenantService.updateStatus.mockRejectedValue(new Error('Tenant tidak ditemukan'));
+
+      await expect(controller.updateStatus(reqFor({ status: 'SUSPENDED' }), res)).rejects.toThrow();
+      expect(auditService.logUpdate).not.toHaveBeenCalled();
+    });
+
+    it('tanpa req.user -> UnauthorizedError, tidak menulis apa pun', async () => {
+      const res = createMockResponse();
+
+      await expect(
+        controller.updateStatus(reqFor({ status: 'SUSPENDED' }, null), res)
+      ).rejects.toThrow(UnauthorizedError);
+      expect(tenantService.updateStatus).not.toHaveBeenCalled();
       expect(auditService.logUpdate).not.toHaveBeenCalled();
     });
   });

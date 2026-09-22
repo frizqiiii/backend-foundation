@@ -98,6 +98,21 @@ describe('TenantRepository', () => {
     expect(result).toBe(updated);
   });
 
+  it('T3 — updateStatus HANYA menulis kolom status (bukan plan/slug/name)', async () => {
+    const prisma = createMockPrisma();
+    const updated = { id: 't1', status: 'SUSPENDED' };
+    (prisma.tenant.update as jest.Mock).mockResolvedValue(updated);
+    const repository = new TenantRepository(prisma);
+
+    const result = await repository.updateStatus('t1', 'SUSPENDED');
+
+    expect(prisma.tenant.update).toHaveBeenCalledWith({
+      where: { id: 't1' },
+      data: { status: 'SUSPENDED' },
+    });
+    expect(result).toBe(updated);
+  });
+
   it('softDelete mengisi deletedAt, TIDAK menghapus row secara fisik', async () => {
     const prisma = createMockPrisma();
     const updated = { id: 't1', deletedAt: new Date() };

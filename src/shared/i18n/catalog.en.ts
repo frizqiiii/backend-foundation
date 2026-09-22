@@ -191,6 +191,9 @@ export const EN_MESSAGES: Readonly<Record<string, string>> = {
   'Statistik user berhasil diambil': 'User statistics retrieved successfully',
   'Daftar tenant berhasil diambil': 'Tenant list retrieved successfully',
   'Plan tenant berhasil diperbarui': 'Tenant plan updated successfully',
+  'Status tenant berhasil diperbarui': 'Tenant status updated successfully',
+  'Tenant pemilik API key ini tidak ditemukan atau sedang tidak aktif':
+    'The tenant that owns this API key was not found or is currently inactive',
   'Tenant berhasil dibuat': 'Tenant created successfully',
   'Slug hanya boleh huruf kecil, angka, dan tanda hubung':
     'Slug may only contain lowercase letters, numbers, and hyphens',
