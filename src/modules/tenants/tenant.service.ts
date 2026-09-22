@@ -1,4 +1,4 @@
-import type { Tenant } from '@prisma/client';
+import type { Tenant, TenantStatus } from '@prisma/client';
 import type { TenantRepository } from './tenant.repository';
 import type { CreateTenantDto, ListTenantsQueryDto } from './tenant.dto';
 import type { TenantPlanName } from '../../shared/security/rate-limit-tiers';
@@ -112,5 +112,52 @@ export class TenantService {
 
   async invalidateSlugCache(slug: string): Promise<void> {
     await invalidateCache(cacheKeys.tenantBySlug(slug));
+  }
+
+  /**
+   * T3 — ganti status tenant (ACTIVE/SUSPENDED). Cache DIINVALIDASI
+   * eksplisit (slug DAN id) — pola sama dengan `updatePlan` — supaya
+   * suspend terasa SEGERA di kedua jalur enforcement (`tenantMiddleware`
+   * lewat slug, `authenticateWithApiKey` lewat id), bukan menunggu
+   * TTL 30 detik. Tidak dibungkus try/catch di sini (beda dari
+   * `resolveTenantPlanSafe` yang fail-soft) — SENGAJA: ini keputusan
+   * kontrol akses, kegagalan menulisnya harus terlihat sebagai error,
+   * bukan diam-diam dianggap berhasil.
+   */
+  async updateStatus(
+    id: string,
+    status: TenantStatus
+  ): Promise<{ tenant: Tenant; previousStatus: TenantStatus }> {
+    const existing = await this.tenantRepository.findById(id);
+    if (!existing) {
+      throw new NotFoundError('Tenant tidak ditemukan');
+    }
+    const updated = await this.tenantRepository.updateStatus(id, status);
+    await Promise.all([
+      this.invalidateSlugCache(updated.slug),
+      invalidateCache(cacheKeys.tenantStatusById(id)),
+    ]);
+    return { tenant: updated, previousStatus: existing.status };
+  }
+
+  /**
+   * T3 — dipakai `authenticateWithApiKey` (jalur API key, cuma tahu
+   * `ApiKey.tenantId`, bukan slug — sama alasannya seperti
+   * `resolvePlanById`). Tenant yang TIDAK DITEMUKAN dianggap TIDAK
+   * aktif (`false`), bukan dilempar sebagai error — konsisten dengan
+   * `resolveActiveTenantBySlug` yang juga menolak slug tidak dikenal
+   * maupun tenant SUSPENDED dengan cara yang sama (tidak membedakan
+   * keduanya dari sudut pandang pemanggil). SENGAJA TIDAK fail-soft:
+   * error dari cache/database di sini dibiarkan MENJALAR ke pemanggil
+   * (beda dari `resolveTenantPlanSafe`) — lihat komentar di
+   * `shared/tenant/tenant-status.ts` untuk alasan lengkapnya.
+   */
+  async isActiveById(tenantId: string): Promise<boolean> {
+    const status = await getOrSetCache<TenantStatus | 'NOT_FOUND'>(
+      cacheKeys.tenantStatusById(tenantId),
+      TENANT_CACHE_TTL_SECONDS,
+      async () => (await this.tenantRepository.findById(tenantId))?.status ?? 'NOT_FOUND'
+    );
+    return status === 'ACTIVE';
   }
 }

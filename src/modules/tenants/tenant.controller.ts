@@ -1,22 +1,25 @@
 import type { Request, Response } from 'express';
 import type { TenantService } from './tenant.service';
 import type { AuditService } from '../audit/audit.service';
-import { createTenantSchema, listTenantsQuerySchema, updateTenantPlanSchema } from './tenant.dto';
+import {
+  createTenantSchema,
+  listTenantsQuerySchema,
+  updateTenantPlanSchema,
+  updateTenantStatusSchema,
+} from './tenant.dto';
 import { sendSuccess } from '../../shared/utils/response';
 import { UnauthorizedError } from '../../shared/utils/http-error';
 import { getClientIp, getUserAgent } from '../../shared/utils/request-context';
 
 /**
- * Endpoint admin platform untuk mengelola tenant — SENGAJA hanya
- * `list`/`create` di fase Foundation ini (Phase 11), plus `updatePlan`
- * (Fase 2 item 2.11 — hanya mengubah kuota rate limit, tanpa implikasi
- * ke sesi user). Update/suspend
- * status dan penghapusan tenant ditunda ke fase enterprise berikutnya
- * (lihat `docs/tenant-migration-strategy.md`) karena keduanya punya
- * implikasi lebih besar (mis. apa yang terjadi pada session user
- * aktif milik tenant yang baru saja di-SUSPEND) yang perlu dirancang
- * eksplisit, bukan ditempel terburu-buru di fase yang sama dengan
- * peletakan fondasi skema.
+ * Endpoint admin platform untuk mengelola tenant — `list`/`create`
+ * (Phase 11), `updatePlan` (Fase 2 item 2.11 — kuota rate limit), dan
+ * `updateStatus` (T3 — ACTIVE/SUSPENDED, lihat komentar method di
+ * bawah untuk implikasi akses). Penghapusan tenant (hard delete)
+ * tetap ditunda ke fase enterprise berikutnya (lihat
+ * `docs/tenant-migration-strategy.md`) — beda dari status/plan,
+ * implikasinya (apa yang terjadi ke data anak: User/Product/Event
+ * milik tenant itu) belum dirancang eksplisit.
  */
 export class TenantController {
   constructor(
@@ -57,5 +60,34 @@ export class TenantController {
     );
 
     sendSuccess(res, 200, 'Plan tenant berhasil diperbarui', tenant);
+  };
+
+  /**
+   * T3 — ganti status tenant (ACTIVE/SUSPENDED). Sama seperti
+   * `updatePlan`: perubahan ini menentukan APAKAH tenant boleh
+   * diakses sama sekali (lewat header tenant MAUPUN API key — lihat
+   * `shared/tenant/tenant-status.ts`), jadi WAJIB tercatat siapa yang
+   * mengubah, kapan, dari status apa ke status apa — termasuk untuk
+   * PATCH yang tidak mengubah nilai.
+   */
+  updateStatus = async (req: Request, res: Response): Promise<void> => {
+    if (!req.user) {
+      throw new UnauthorizedError();
+    }
+
+    const input = updateTenantStatusSchema.parse(req.body);
+    const { tenant, previousStatus } = await this.tenantService.updateStatus(
+      req.params.id,
+      input.status
+    );
+
+    await this.auditService.logUpdate(
+      'Tenant',
+      tenant.id,
+      { userId: req.user.id, ipAddress: getClientIp(req), userAgent: getUserAgent(req) },
+      { field: 'status', from: previousStatus, to: tenant.status }
+    );
+
+    sendSuccess(res, 200, 'Status tenant berhasil diperbarui', tenant);
   };
 }

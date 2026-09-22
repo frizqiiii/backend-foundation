@@ -46,3 +46,18 @@ export const updateTenantPlanSchema = z.object({
 });
 
 export type UpdateTenantPlanDto = z.infer<typeof updateTenantPlanSchema>;
+
+/**
+ * T3 — HARUS identik dengan `enum TenantStatus` di `schema.prisma`.
+ */
+export const tenantStatusSchema = z.enum(['ACTIVE', 'SUSPENDED']);
+
+/**
+ * T3 — body `PATCH /tenants/:id/status`. Pola sama dengan
+ * `updateTenantPlanSchema` di atas.
+ */
+export const updateTenantStatusSchema = z.object({
+  status: tenantStatusSchema,
+});
+
+export type UpdateTenantStatusDto = z.infer<typeof updateTenantStatusSchema>;

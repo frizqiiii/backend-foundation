@@ -1,4 +1,4 @@
-import type { PrismaClient, Tenant } from '@prisma/client';
+import type { PrismaClient, Tenant, TenantStatus } from '@prisma/client';
 import type { TenantPlanName } from '../../shared/security/rate-limit-tiers';
 
 /**
@@ -66,6 +66,17 @@ export class TenantRepository {
    */
   async updatePlan(id: string, plan: TenantPlanName): Promise<Tenant> {
     return this.prisma.tenant.update({ where: { id }, data: { plan } });
+  }
+
+  /**
+   * T3 — SENGAJA hanya mengubah `status` (bukan `update` generik),
+   * pola sama dengan `updatePlan` di atas. Beda dengan `plan`, ganti
+   * `status` ke SUSPENDED punya efek nyata ke akses (lihat
+   * `tenant.controller.ts` dan `shared/tenant/tenant-status.ts`) —
+   * bukan cuma angka kuota.
+   */
+  async updateStatus(id: string, status: TenantStatus): Promise<Tenant> {
+    return this.prisma.tenant.update({ where: { id }, data: { status } });
   }
 
   /**

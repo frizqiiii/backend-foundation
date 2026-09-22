@@ -38,5 +38,12 @@ tenantRouter.patch(
   requirePermission('tenant.manage'),
   asyncHandler(tenantController.updatePlan)
 );
+// T3 — ganti status (ACTIVE/SUSPENDED) sebuah tenant.
+tenantRouter.patch(
+  '/:id/status',
+  authMiddleware,
+  requirePermission('tenant.manage'),
+  asyncHandler(tenantController.updateStatus)
+);
 
 export { tenantService };

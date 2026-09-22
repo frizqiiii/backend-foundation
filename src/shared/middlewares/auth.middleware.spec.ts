@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { UnauthorizedError, NotFoundError } from '../utils/http-error';
+import { UnauthorizedError, NotFoundError, ForbiddenError } from '../utils/http-error';
 
 const jwtVerifyMock = jest.fn();
 const isBlacklistedMock = jest.fn();
@@ -7,6 +7,7 @@ const apiKeyAuthenticateMock = jest.fn();
 const findByIdMock = jest.fn();
 const enforceGatewayMock = jest.fn();
 const resolveTenantPlanSafeMock = jest.fn();
+const isTenantActiveForApiKeyMock = jest.fn();
 
 jest.mock('../utils/jwt', () => ({ jwtHelper: { verify: jwtVerifyMock } }));
 jest.mock('../utils/token-blacklist', () => ({
@@ -17,6 +18,9 @@ jest.mock('../security/api-key-gateway', () => ({
   enforcePartnerApiGatewayLimit: enforceGatewayMock,
 }));
 jest.mock('../tenant/tenant-plan', () => ({ resolveTenantPlanSafe: resolveTenantPlanSafeMock }));
+jest.mock('../tenant/tenant-status', () => ({
+  isTenantActiveForApiKey: isTenantActiveForApiKeyMock,
+}));
 jest.mock('../../modules/api-keys/api-key.service', () => ({
   ApiKeyService: jest.fn().mockImplementation(() => ({ authenticate: apiKeyAuthenticateMock })),
 }));
@@ -38,6 +42,7 @@ describe('authMiddleware', () => {
     isBlacklistedMock.mockResolvedValue(false);
     enforceGatewayMock.mockResolvedValue(undefined);
     resolveTenantPlanSafeMock.mockResolvedValue(null);
+    isTenantActiveForApiKeyMock.mockResolvedValue(true);
   });
 
   it('melempar UnauthorizedError kalau header Authorization tidak ada', async () => {
@@ -129,6 +134,43 @@ describe('authMiddleware', () => {
 
     expect(next).toHaveBeenCalledWith(quotaError);
     expect(findByIdMock).not.toHaveBeenCalled();
+  });
+
+  it('T3 — tenant pemilik API key SUSPENDED -> ForbiddenError, TIDAK sampai cek kuota gateway maupun query pemilik key (ditegakkan sedini mungkin)', async () => {
+    apiKeyAuthenticateMock.mockResolvedValue({
+      apiKeyId: 'key-1',
+      userId: 'user-1',
+      tenantId: 'tenant-suspended',
+      scopes: [],
+      expiresAt: null,
+    });
+    isTenantActiveForApiKeyMock.mockResolvedValue(false);
+
+    const next = jest.fn() as NextFunction;
+    await authMiddleware(createMockReq('Bearer bfk_abc123'), {} as Response, next);
+
+    expect(isTenantActiveForApiKeyMock).toHaveBeenCalledWith('tenant-suspended');
+    expect(next).toHaveBeenCalledWith(expect.any(ForbiddenError));
+    expect(enforceGatewayMock).not.toHaveBeenCalled();
+    expect(findByIdMock).not.toHaveBeenCalled();
+  });
+
+  it('T3 — tenant pemilik API key ACTIVE -> berlanjut normal ke pengecekan kuota', async () => {
+    apiKeyAuthenticateMock.mockResolvedValue({
+      apiKeyId: 'key-1',
+      userId: 'user-1',
+      tenantId: 'tenant-acme',
+      scopes: [],
+      expiresAt: null,
+    });
+    isTenantActiveForApiKeyMock.mockResolvedValue(true);
+    findByIdMock.mockResolvedValue({ id: 'user-1', email: 'budi@example.com', role: 'USER' });
+
+    const next = jest.fn() as NextFunction;
+    await authMiddleware(createMockReq('Bearer bfk_abc123'), {} as Response, next);
+
+    expect(isTenantActiveForApiKeyMock).toHaveBeenCalledWith('tenant-acme');
+    expect(next).toHaveBeenCalledWith();
   });
 
   it('meneruskan NotFoundError kalau pemilik API key sudah tidak ada', async () => {

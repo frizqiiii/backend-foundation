@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { jwtHelper } from '../utils/jwt';
-import { UnauthorizedError, NotFoundError } from '../utils/http-error';
+import { UnauthorizedError, NotFoundError, ForbiddenError } from '../utils/http-error';
 import { tokenBlacklist } from '../utils/token-blacklist';
 import { prisma } from '../config/database';
 import { UserRepository } from '../../modules/users/user.repository';
@@ -9,6 +9,7 @@ import { ApiKeyRepository } from '../../modules/api-keys/api-key.repository';
 import { ApiKeyService } from '../../modules/api-keys/api-key.service';
 import { enforcePartnerApiGatewayLimit } from '../security/api-key-gateway';
 import { resolveTenantPlanSafe } from '../tenant/tenant-plan';
+import { isTenantActiveForApiKey } from '../tenant/tenant-status';
 import { API_KEY_JTI_PREFIX } from '../security/api-key-auth';
 
 // Instance module-level — sama pola & alasan seperti
@@ -126,6 +127,15 @@ export async function authMiddleware(
 async function authenticateWithApiKey(req: Request, rawKey: string): Promise<void> {
   const { apiKeyId, userId, tenantId, scopes, expiresAt } =
     await apiKeyService.authenticate(rawKey);
+
+  // T3 — WAJIB dicek SEDINI mungkin (sebelum kuota Redis di bawah
+  // ikut ditegakkan/dicatat untuk request yang toh akan ditolak).
+  // Lihat `shared/tenant/tenant-status.ts` untuk kenapa ini
+  // diperlukan (tanpa ini, suspend tenant tidak berlaku sama sekali
+  // di jalur API key) dan kenapa SENGAJA fail-closed.
+  if (!(await isTenantActiveForApiKey(tenantId))) {
+    throw new ForbiddenError('Tenant pemilik API key ini tidak ditemukan atau sedang tidak aktif');
+  }
 
   // Fase 2 (item 2.10 — API Gateway edge) — kuota PER API KEY,
   // ditegakkan SEDINI mungkin (sebelum query `findById` di bawah)
