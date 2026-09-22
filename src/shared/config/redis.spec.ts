@@ -53,3 +53,57 @@ describe('redis.ts — konfigurasi fail-fast (Chaos Engineering, item 2.7)', () 
     });
   });
 });
+
+describe('redis.ts — konfigurasi Cluster fail-fast (temuan T21, audit ulang item 2.7)', () => {
+  const originalClusterNodes = process.env.REDIS_CLUSTER_NODES;
+  const originalRedisUrl = process.env.REDIS_URL;
+
+  afterEach(() => {
+    process.env.REDIS_CLUSTER_NODES = originalClusterNodes;
+    process.env.REDIS_URL = originalRedisUrl;
+  });
+
+  it('maxRetriesPerRequest: 0 di redisOptions — sama seperti mode single-instance', async () => {
+    await jest.isolateModulesAsync(async () => {
+      delete process.env.REDIS_URL;
+      process.env.REDIS_CLUSTER_NODES = '127.0.0.1:7000,127.0.0.1:7001';
+      const { redisClient } = await import('./redis');
+      expect(redisClient).not.toBeNull();
+      const opts = (
+        redisClient as unknown as { options: { redisOptions: { maxRetriesPerRequest: number } } }
+      ).options.redisOptions;
+      expect(opts.maxRetriesPerRequest).toBe(0);
+      await new Promise((r) => setTimeout(r, 300));
+      redisClient?.disconnect();
+    });
+  });
+
+  it('clusterRetryStrategy: delay KONSTAN (bukan default ioredis yang retry selamanya tanpa batas eksplisit)', async () => {
+    await jest.isolateModulesAsync(async () => {
+      delete process.env.REDIS_URL;
+      process.env.REDIS_CLUSTER_NODES = '127.0.0.1:7000,127.0.0.1:7001';
+      const { redisClient } = await import('./redis');
+      const strategy = (
+        redisClient as unknown as { options: { clusterRetryStrategy: (times: number) => number } }
+      ).options.clusterRetryStrategy;
+      expect(strategy(1)).toBe(strategy(50));
+      expect(strategy(1)).toBeLessThanOrEqual(500);
+      await new Promise((r) => setTimeout(r, 300));
+      redisClient?.disconnect();
+    });
+  });
+
+  it('enableOfflineQueue: false — command SAAT cluster tidak ready ditolak seketika, tidak diantre tanpa batas waktu (akar masalah T21: diuji nyata satu GET hang >15 detik sebelum fix ini)', async () => {
+    await jest.isolateModulesAsync(async () => {
+      delete process.env.REDIS_URL;
+      process.env.REDIS_CLUSTER_NODES = '127.0.0.1:7000,127.0.0.1:7001';
+      const { redisClient } = await import('./redis');
+      expect(
+        (redisClient as unknown as { options: { enableOfflineQueue: boolean } }).options
+          .enableOfflineQueue
+      ).toBe(false);
+      await new Promise((r) => setTimeout(r, 300));
+      redisClient?.disconnect();
+    });
+  });
+});

@@ -35,11 +35,34 @@ function buildRedisClient(): Redis | Cluster | null {
     });
 
     return new Cluster(nodes, {
-      redisOptions: {
-        // Sama alasannya dengan mode single-instance di bawah — cache
-        // yang gagal tidak boleh membuat request HTTP menunggu lama.
-        maxRetriesPerRequest: 2,
-      },
+      // TEMUAN T21 (audit ulang item 2.7 — chaos drill Redis Cluster,
+      // dijalankan nyata: cluster 3-node sungguhan dimatikan seluruhnya
+      // di tengah traffic): konfigurasi lama di sini (`maxRetriesPerRequest: 2`,
+      // TANPA `clusterRetryStrategy`/`enableOfflineQueue` sendiri) jauh
+      // LEBIH PARAH dari bug single-instance yang sudah diperbaiki di
+      // bawah — command tidak cuma lambat, tapi BISA HANG SELAMANYA
+      // (diuji nyata: satu `GET` tidak pernah resolve dalam >15 detik,
+      // sementara traffic HTTP kontinu semuanya macet 5+ detik per
+      // request). Akar masalah: `enableOfflineQueue` default `true`
+      // pada ioredis Cluster membuat command masuk ANTREAN menunggu
+      // cluster kembali "ready", dan `clusterRetryStrategy` default
+      // TIDAK PERNAH menyerah (retry selamanya) — jadi antrean itu
+      // tidak pernah di-flush/reject, KONTRADIKTIF dengan tujuan
+      // fail-open yang sama seperti mode single-instance di atas.
+      // Fix (pola sama seperti single-instance, disesuaikan untuk
+      // Cluster): `maxRetriesPerRequest: 0` (command per-node gagal
+      // seketika), `clusterRetryStrategy` delay KONSTAN (reconnect
+      // topologi tetap dicoba terus di background, tidak makin
+      // jarang), dan `enableOfflineQueue: false` (command yang datang
+      // SAAT cluster belum/tidak ready langsung ditolak, bukan
+      // diam-diam diantre tanpa batas waktu). Diuji ulang sesudah fix
+      // (cluster 3-node sungguhan, semua node dimatikan): command
+      // ditolak dalam <1ms (bukan hang), traffic tetap 100% terlayani
+      // (fail-open beneran), dan pulih otomatis ~258ms setelah cluster
+      // hidup lagi TANPA restart proses — sama seperti single-instance.
+      redisOptions: { maxRetriesPerRequest: 0 },
+      clusterRetryStrategy: () => 200,
+      enableOfflineQueue: false,
     });
   }
 
