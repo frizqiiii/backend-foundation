@@ -51,6 +51,59 @@ desainnya.
 Test regresi ditambahkan (`src/shared/config/redis.spec.ts`) supaya
 bug yang SAMA tidak bisa lolos lagi tanpa drill manual berulang.
 
+## TEMUAN T21 (audit ulang) — mode Redis Cluster TIDAK ikut kena fix di atas, jauh lebih parah
+
+Drill di atas hanya menguji cabang single-instance (`env.REDIS_URL`).
+Audit ulang menemukan cabang Redis Cluster (`env.REDIS_CLUSTER_NODES`,
+Fase 14 — Enterprise Scalability) masih memakai konfigurasi LAMA yang
+belum diperbaiki (`maxRetriesPerRequest: 2`, tanpa `clusterRetryStrategy`
+atau `enableOfflineQueue` sendiri) — kontradiktif dengan komentar file
+`redis.ts` sendiri yang bilang kedua mode berbagi perilaku yang sama.
+
+**Dibuktikan nyata** (cluster Redis 3-node sungguhan di sandbox — bukan
+mock — dibuat dengan `redis-cli --cluster create`, harness pakai
+`ioredis` `Cluster` dengan konfigurasi PERSIS sama seperti
+`redis.ts`): setelah SELURUH node cluster dimatikan sungguhan, satu
+command `GET` **tidak pernah resolve** (dites >15 detik, tidak pernah
+resolve maupun reject), dan di bawah traffic HTTP kontinu setiap
+request macet 5+ detik (dibatasi client timeout saya, latensi
+sesungguhnya lebih lama lagi) — **JAUH lebih parah** dari bug
+single-instance yang sudah diperbaiki (yang "cuma" melambat sampai
+~3 detik, tidak pernah hang total). Akar masalah (diverifikasi lewat
+probe terisolasi): `enableOfflineQueue` default `true` pada ioredis
+Cluster membuat command masuk antrean menunggu cluster "ready", dan
+`clusterRetryStrategy` bawaan ioredis TIDAK PERNAH menyerah (retry
+selamanya) — jadi antrean itu tidak pernah di-flush, kontradiktif
+total dengan tujuan fail-open.
+
+**Fix** (`src/shared/config/redis.ts`, cabang Cluster): `maxRetriesPerRequest: 0`
+(sama seperti single-instance), `clusterRetryStrategy: () => 200` (delay
+konstan, sama filosofinya), dan **`enableOfflineQueue: false`** (baru —
+tidak ada padanannya di cabang single-instance karena ioredis single-
+instance tidak punya antrean cluster-level seperti ini) — command yang
+datang saat cluster belum/tidak ready langsung ditolak, tidak diam-diam
+diantre tanpa batas waktu.
+
+**Sesudah fix, diverifikasi ulang nyata** (cluster 3-node yang sama):
+- Matikan seluruh node → command ditolak dalam <1ms (bukan hang),
+  10 request traffic berturut-turut semuanya langsung fail-open
+  (bukan macet).
+- Nyalakan cluster lagi → pulih otomatis ~258ms, TANPA restart proses.
+
+Test regresi ditambahkan (`src/shared/config/redis.spec.ts`, 3 test
+baru untuk cabang Cluster) — dijalankan 5x berturut-turut di sandbox,
+stabil 5/5. **Batas kecil yang jujur diakui**: ketiga test Cluster ini
+memicu peringatan non-fatal Jest ("did not exit one second after...")
+karena `ioredis` `Cluster` menyisakan timer latar belakang sesaat
+meski sudah `disconnect()` — TIDAK mempengaruhi hasil test (exit code
+tetap 0, 5/5 lolos konsisten di banyak run), murni kosmetik di log CI.
+
+**BELUM diverifikasi**: perilaku ini di komputer/CI kamu (baru diuji
+di sandbox AI ini); dan skenario cluster PARSIAL mati (mis. 1 dari 3
+node down, bukan semuanya) — drill di atas hanya menguji cluster mati
+TOTAL, karena itu yang paling dekat dengan skenario "Redis mati" yang
+sama seperti drill single-instance.
+
 ## Postgres chaos — BELUM tercakup penuh (butuh environment kamu)
 
 Sandbox AI ini tidak bisa menjalankan Express app yang sesungguhnya
