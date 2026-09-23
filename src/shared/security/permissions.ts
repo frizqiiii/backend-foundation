@@ -70,7 +70,18 @@ export type Permission =
   // (yang kedua jauh lebih sensitif: client secret IdP pihak
   // ketiga), pola yang sama dengan pemisahan `event.moderate` dari
   // `event.update` di atas.
-  | 'sso.manage';
+  | 'sso.manage'
+  // T4 — override kuota rate limit per-menit untuk SATU API key
+  // tertentu (`ApiKey.rateLimitOverridePerMinute`), di luar tier plan
+  // tenant pemiliknya. SENGAJA permission TERPISAH dari `tenant.manage`
+  // (pola yang sama dengan pemisahan `sso.manage` di atas) — mengelola
+  // paket layanan/plan TENANT dan memberi pengecualian kuota untuk
+  // SATU KEY tertentu adalah dua keputusan berbeda granularitasnya
+  // (tenant-wide vs per-key), walau saat ini kebetulan sama-sama
+  // hanya dipegang ADMIN. Juga TERPISAH dari kapabilitas self-service
+  // `ApiKeyController` (create/list/revoke, hanya butuh `authMiddleware`,
+  // dibatasi ke key MILIK SENDIRI) — ini operasi admin lintas-user.
+  | 'api-key.manage';
 
 /**
  * Pemetaan Role → Permission — jenjang eksplisit yang diminta:
@@ -122,6 +133,7 @@ const ROLE_PERMISSIONS: Record<RoleName, readonly Permission[]> = {
     'feature-flag.manage',
     'tenant.manage',
     'sso.manage',
+    'api-key.manage',
   ],
 };
 

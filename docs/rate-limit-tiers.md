@@ -53,6 +53,30 @@ bukan dua field yang bisa tidak sinkron; (3) `tenantRateLimiter` sudah per-tenan
 perlu key tertentu diberi kuota berbeda dari tenant-nya, itu perlu override
 per-key sebagai perluasan terpisah.
 
+## T4 — override per-API-key (perluasan yang disebut di atas)
+
+`ApiKey.rateLimitOverridePerMinute` (nullable, default `null` — backward
+compatible penuh) MENGALAHKAN angka tier plan kalau diisi, HANYA untuk kuota
+per-API-key (`enforcePartnerApiGatewayLimit`) — TIDAK memengaruhi
+`tenantRateLimiter` (limiter per-tenant tetap murni ikut plan tenant, tanpa
+pengecualian per-key). Diset lewat `PATCH /api/v1/api-keys/:id/rate-limit-override`
+(admin, permission `api-key.manage` — TERPISAH dari permission self-service
+`ApiKeyController` lain, dan SENGAJA bisa menjangkau key milik user mana pun,
+bukan cuma milik sendiri: memberi pengecualian kuota adalah keputusan
+platform). `rateLimitOverridePerMinute: null` di body MENGHAPUS override
+(kembali ke tier plan). Diambil dari row `ApiKey` yang SAMA yang sudah
+di-fetch untuk validasi key saat autentikasi — TIDAK ada query/cache
+tambahan untuk field ini.
+
+Nilai `0` (seharusnya mustahil lewat DTO yang mewajibkan `.positive()`, tapi
+mungkin lewat edit manual database) diperlakukan sebagai "tidak ada
+override" (`||`, bukan `??`, di `enforcePartnerApiGatewayLimit`) — pertahanan
+lapis kedua supaya override yang salah tidak diam-diam memblokir SELURUH
+traffic satu key.
+
+Perubahan override tercatat di audit log (`entity: 'ApiKey'`, pola sama
+seperti T2/T3), termasuk untuk PATCH yang tidak mengubah nilai.
+
 ## Perilaku kegagalan (fail-soft/fail-open)
 
 - Plan tidak dikenal/kosong (`null`, cache lama tanpa field `plan`, nilai asing)
@@ -122,3 +146,13 @@ test perilaku LAMA tetap lolos).
 `npx prisma migrate dev` dengan migration `20260919000000_tenant_plan_rate_limit_tiers`,
 limiter berbasis Redis dengan plan yang berubah di tengah window, dan
 `PATCH /tenants/:id/plan` terhadap database sungguhan.
+
+**T4 (override per-key):** diverifikasi di sandbox — `tsc --noEmit` bersih,
+`lint:ci` bersih, unit test repository/service/controller/`enforcePartnerApiGatewayLimit`,
+plus integration test end-to-end baru
+(`app.api-key-rate-limit-override-audit.integration.spec.ts`, 6 test) yang membuktikan
+ADMIN bisa memberi override ke key MILIK USER LAIN, role tanpa `api-key.manage` DITOLAK
+walau terhadap key MILIK SENDIRI, dan audit log "dari -> ke" tercatat lewat kode produksi.
+Suite penuh **160 suite / 1328 test lolos**, nol regresi. **BELUM diverifikasi**: migration
+`20260923000000_api_key_rate_limit_override` terhadap Postgres sungguhan, dan endpoint ini
+terhadap database/Redis sungguhan.

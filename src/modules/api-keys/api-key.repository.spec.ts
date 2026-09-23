@@ -73,6 +73,45 @@ describe('ApiKeyRepository', () => {
     expect(prisma.apiKey.findFirst).toHaveBeenCalledWith({ where: { id: 'k1', userId: 'u1' } });
   });
 
+  it('T4 — findById mencari LINTAS user (TIDAK di-scope), beda dari findByIdForUser', async () => {
+    const prisma = createMockPrisma();
+    (prisma.apiKey.findUnique as jest.Mock).mockResolvedValue(null);
+    const repository = new ApiKeyRepository(prisma);
+
+    await repository.findById('k1');
+
+    expect(prisma.apiKey.findUnique).toHaveBeenCalledWith({ where: { id: 'k1' } });
+  });
+
+  it('T4 — updateRateLimitOverride menyimpan angka override', async () => {
+    const prisma = createMockPrisma();
+    const updated = { id: 'k1', rateLimitOverridePerMinute: 500 };
+    (prisma.apiKey.update as jest.Mock).mockResolvedValue(updated);
+    const repository = new ApiKeyRepository(prisma);
+
+    const result = await repository.updateRateLimitOverride('k1', 500);
+
+    expect(prisma.apiKey.update).toHaveBeenCalledWith({
+      where: { id: 'k1' },
+      data: { rateLimitOverridePerMinute: 500 },
+    });
+    expect(result).toBe(updated);
+  });
+
+  it('T4 — updateRateLimitOverride(id, null) MENGHAPUS override, bukan diabaikan', async () => {
+    const prisma = createMockPrisma();
+    const updated = { id: 'k1', rateLimitOverridePerMinute: null };
+    (prisma.apiKey.update as jest.Mock).mockResolvedValue(updated);
+    const repository = new ApiKeyRepository(prisma);
+
+    await repository.updateRateLimitOverride('k1', null);
+
+    expect(prisma.apiKey.update).toHaveBeenCalledWith({
+      where: { id: 'k1' },
+      data: { rateLimitOverridePerMinute: null },
+    });
+  });
+
   it('revoke mengisi revokedAt dengan Date sekarang', async () => {
     const prisma = createMockPrisma();
     const revoked = { id: 'k1', revokedAt: new Date() };

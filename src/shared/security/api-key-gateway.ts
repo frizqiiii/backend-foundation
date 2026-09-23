@@ -35,6 +35,11 @@ import { partnerApiRequestsTotal } from '../../modules/monitoring/metrics/metric
  * angka statis untuk semua. `plan` tidak diketahui (`null`/
  * `undefined`) jatuh ke tier default (PRO = angka flat lama), jadi
  * perilaku sebelum item 2.11 tetap terjaga untuk key tanpa tenant.
+ * T4 membangun DI ATAS ini lagi: `rateLimitOverridePerMinute`
+ * (`ApiKey.rateLimitOverridePerMinute`, diset lewat
+ * `PATCH /api-keys/:id/rate-limit-override`) MENGALAHKAN angka tier
+ * plan kalau diisi (bukan `null`) — pengecualian per-key, terpisah
+ * dari model plan tenant (lihat `docs/rate-limit-tiers.md`).
  */
 
 const WINDOW_SECONDS = 60;
@@ -45,7 +50,8 @@ function gatewayKey(apiKeyId: string): string {
 
 export async function enforcePartnerApiGatewayLimit(
   apiKeyId: string,
-  plan?: string | null
+  plan?: string | null,
+  rateLimitOverridePerMinute?: number | null
 ): Promise<void> {
   if (!redisClient) {
     // Fail-open TANPA Redis sama sekali (konsisten dengan seluruh
@@ -87,7 +93,16 @@ export async function enforcePartnerApiGatewayLimit(
     return;
   }
 
-  const limit = getRateLimitTier(plan).apiKeyRequestsPerMinute;
+  // T4 — SENGAJA `||` (bukan `??`): 0 dianggap "tidak ada override"
+  // (jatuh ke tier plan), bukan "limit 0 request/menit". DTO admin
+  // (`updateApiKeyRateLimitOverrideSchema`) sudah menolak 0 saat
+  // disimpan (`.positive()`), jadi ini murni pertahanan lapis kedua
+  // kalau suatu saat ada nilai 0 tersimpan lewat jalur lain (mis.
+  // edit manual database) — override yang secara tidak sengaja
+  // memblokir SELURUH traffic key itu adalah kegagalan yang jauh
+  // lebih berbahaya untuk didiamkan daripada override yang diam-diam
+  // diabaikan.
+  const limit = rateLimitOverridePerMinute || getRateLimitTier(plan).apiKeyRequestsPerMinute;
   if (count > limit) {
     partnerApiRequestsTotal.inc({ outcome: 'rejected' });
     throw new TooManyRequestsError(

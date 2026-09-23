@@ -95,6 +95,27 @@ export class ApiKeyService {
   }
 
   /**
+   * T4 — admin (`api-key.manage`), TIDAK di-scope ke `userId` (beda
+   * dari `revoke` di atas) — SENGAJA: memberi pengecualian kuota
+   * adalah keputusan platform, boleh dilakukan ke key MILIK USER MANA
+   * PUN, bukan cuma milik sendiri. Mengembalikan nilai SEBELUMNYA
+   * (dibaca sebelum menulis) — pola sama seperti
+   * `TenantService.updateStatus`/`updatePlan` (T2/T3) — supaya
+   * controller bisa mencatat "dari -> ke" di audit log.
+   */
+  async updateRateLimitOverride(
+    apiKeyId: string,
+    value: number | null
+  ): Promise<{ apiKey: ApiKey; previousValue: number | null }> {
+    const existing = await this.apiKeyRepository.findById(apiKeyId);
+    if (!existing) {
+      throw new NotFoundError('API key tidak ditemukan');
+    }
+    const updated = await this.apiKeyRepository.updateRateLimitOverride(apiKeyId, value);
+    return { apiKey: updated, previousValue: existing.rateLimitOverridePerMinute };
+  }
+
+  /**
    * Dipanggil `apiKeyAuthMiddleware` untuk SETIAP request yang
    * memakai API key alih-alih JWT — melempar `UnauthorizedError`
    * untuk key yang tidak dikenal/revoked/kedaluwarsa. `lastUsedAt`
@@ -110,6 +131,11 @@ export class ApiKeyService {
     tenantId: string | null;
     scopes: Permission[];
     expiresAt: Date | null;
+    // T4 — override kuota per-menit KHUSUS key ini (`null` = tidak
+    // ada, pakai tier plan seperti biasa). Diambil dari row yang SAMA
+    // yang sudah di-fetch untuk validasi key di atas — TIDAK ada query
+    // tambahan untuk field ini.
+    rateLimitOverridePerMinute: number | null;
   }> {
     const apiKey = await this.apiKeyRepository.findByHash(hashKey(rawKey));
     if (!apiKey) {
@@ -142,6 +168,7 @@ export class ApiKeyService {
       tenantId: apiKey.tenantId,
       scopes: apiKey.scopes as Permission[],
       expiresAt: apiKey.expiresAt,
+      rateLimitOverridePerMinute: apiKey.rateLimitOverridePerMinute,
     };
   }
 

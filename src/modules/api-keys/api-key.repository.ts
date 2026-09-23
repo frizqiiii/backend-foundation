@@ -36,6 +36,28 @@ export class ApiKeyRepository {
     return this.prisma.apiKey.findFirst({ where: { id, userId } });
   }
 
+  /**
+   * T4 — TIDAK di-scope ke `userId`, beda dari `findByIdForUser` di
+   * atas: dipakai jalur admin (`ApiKeyService.updateRateLimitOverride`,
+   * permission `api-key.manage`) yang justru HARUS bisa menjangkau
+   * key milik user MANA PUN.
+   */
+  async findById(id: string): Promise<ApiKey | null> {
+    return this.prisma.apiKey.findUnique({ where: { id } });
+  }
+
+  /**
+   * T4 — `value` `null` MENGHAPUS override (kembali memakai tier plan
+   * tenant seperti biasa), bukan sekadar "tidak diisi" — beda dari
+   * kolom lain di model ini yang nullable karena BELUM diisi.
+   */
+  async updateRateLimitOverride(id: string, value: number | null): Promise<ApiKey> {
+    return this.prisma.apiKey.update({
+      where: { id },
+      data: { rateLimitOverridePerMinute: value },
+    });
+  }
+
   async revoke(id: string): Promise<ApiKey> {
     return this.prisma.apiKey.update({ where: { id }, data: { revokedAt: new Date() } });
   }

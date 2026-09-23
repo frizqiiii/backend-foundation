@@ -143,6 +143,46 @@ describe('enforcePartnerApiGatewayLimit (item 2.10 — API Gateway edge)', () =>
     });
   });
 
+  describe('T4 — override kuota per-API-key (mengalahkan tier plan)', () => {
+    it('override diisi -> MENGALAHKAN tier plan, angka override yang dipakai', async () => {
+      mockCount(500);
+      // FREE cuma 60/menit, tapi override 1000 -> tetap lolos.
+      await expect(enforcePartnerApiGatewayLimit('key-1', 'FREE', 1000)).resolves.toBeUndefined();
+
+      mockCount(1001);
+      await expect(enforcePartnerApiGatewayLimit('key-1', 'FREE', 1000)).rejects.toThrow(
+        TooManyRequestsError
+      );
+    });
+
+    it('override null/undefined -> jatuh ke tier plan seperti biasa (perilaku SEBELUM T4 tetap terjaga)', async () => {
+      mockCount(301);
+      await expect(enforcePartnerApiGatewayLimit('key-1', 'PRO', null)).rejects.toThrow(
+        TooManyRequestsError
+      );
+
+      mockCount(301);
+      await expect(enforcePartnerApiGatewayLimit('key-1', 'PRO', undefined)).rejects.toThrow(
+        TooManyRequestsError
+      );
+    });
+
+    it('pesan error memuat angka OVERRIDE, bukan angka tier plan', async () => {
+      mockCount(11);
+
+      await expect(enforcePartnerApiGatewayLimit('key-1', 'FREE', 10)).rejects.toThrow(
+        /maks 10 request\/menit/
+      );
+    });
+
+    it('override 0 diperlakukan sebagai "tidak ada override" (falsy) -> jatuh ke tier plan — DTO admin sendiri sudah menolak 0 saat disimpan, ini lapis pertahanan kedua', async () => {
+      mockCount(301);
+      await expect(enforcePartnerApiGatewayLimit('key-1', 'PRO', 0)).rejects.toThrow(
+        TooManyRequestsError
+      );
+    });
+  });
+
   describe('temuan T18 — kuota tidak boleh tersangkut tanpa TTL', () => {
     /**
      * Redis tiruan yang menyimpan hitungan DAN TTL per kunci, dan mengeksekusi `MULTI/EXEC` secara atomik

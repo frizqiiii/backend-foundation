@@ -42,3 +42,19 @@ export interface ApiKeySummaryDto {
   revokedAt: Date | null;
   createdAt: Date;
 }
+
+/**
+ * T4 — body `PATCH /api-keys/:id/rate-limit-override`. `null`
+ * EKSPLISIT (bukan field dihilangkan) berarti "hapus override, pakai
+ * tier plan tenant lagi" — SENGAJA `nullable()`, bukan `.optional()`,
+ * supaya client harus secara sadar mengirim `null` untuk menghapus,
+ * bukan sekadar lupa mengisi field.
+ */
+export const updateApiKeyRateLimitOverrideSchema = z.object({
+  rateLimitOverridePerMinute: z
+    .number()
+    .int('Override kuota harus bilangan bulat')
+    .positive('Override kuota harus lebih dari 0')
+    .nullable(),
+});
+export type UpdateApiKeyRateLimitOverrideDto = z.infer<typeof updateApiKeyRateLimitOverrideSchema>;

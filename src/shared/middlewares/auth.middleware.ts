@@ -125,7 +125,7 @@ export async function authMiddleware(
  * `permission.middleware.ts`).
  */
 async function authenticateWithApiKey(req: Request, rawKey: string): Promise<void> {
-  const { apiKeyId, userId, tenantId, scopes, expiresAt } =
+  const { apiKeyId, userId, tenantId, scopes, expiresAt, rateLimitOverridePerMinute } =
     await apiKeyService.authenticate(rawKey);
 
   // T3 — WAJIB dicek SEDINI mungkin (sebelum kuota Redis di bawah
@@ -146,7 +146,14 @@ async function authenticateWithApiKey(req: Request, rawKey: string): Promise<voi
   // mengikuti plan tenant pemilik key (`resolveTenantPlanSafe` di-
   // cache & fail-soft — tidak menambah query per request, tidak
   // pernah menggagalkan autentikasi).
-  await enforcePartnerApiGatewayLimit(apiKeyId, await resolveTenantPlanSafe(tenantId));
+  // T4: `rateLimitOverridePerMinute` (dari row key yang sama, TANPA
+  // query tambahan) MENGALAHKAN tier plan kalau diisi — lihat
+  // komentar `enforcePartnerApiGatewayLimit`.
+  await enforcePartnerApiGatewayLimit(
+    apiKeyId,
+    await resolveTenantPlanSafe(tenantId),
+    rateLimitOverridePerMinute
+  );
 
   const user = await userRepository.findById(userId);
   if (!user) {
