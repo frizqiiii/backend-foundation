@@ -470,6 +470,16 @@ model ApiKey {
   scopes    String[]
   lastUsedAt DateTime? @map("last_used_at")
   expiresAt  DateTime? @map("expires_at")
+  // T4 — override kuota per-menit KHUSUS key ini, di luar tier plan
+  // tenant pemiliknya (`rate-limit-tiers.ts`). `null` (default) =
+  // pakai tier plan seperti biasa, backward compatible penuh — semua
+  // key yang sudah ada berperilaku identik sebelum/sesudah migration
+  // ini. HANYA memengaruhi kuota PER-API-KEY (`enforcePartnerApiGatewayLimit`),
+  // BUKAN limiter per-tenant (`tenantRateLimiter`) — lihat
+  // `docs/rate-limit-tiers.md` bagian "Kenapa Tenant.plan, bukan
+  // ApiKey.tier" untuk alasan kenapa override ini SENGAJA perluasan
+  // terpisah, bukan mengganti model plan tenant.
+  rateLimitOverridePerMinute Int? @map("rate_limit_override_per_minute")
   revokedAt  DateTime? @map("revoked_at")
   createdAt  DateTime  @default(now()) @map("created_at")
 

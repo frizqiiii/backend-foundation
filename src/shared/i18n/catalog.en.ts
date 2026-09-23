@@ -192,6 +192,9 @@ export const EN_MESSAGES: Readonly<Record<string, string>> = {
   'Daftar tenant berhasil diambil': 'Tenant list retrieved successfully',
   'Plan tenant berhasil diperbarui': 'Tenant plan updated successfully',
   'Status tenant berhasil diperbarui': 'Tenant status updated successfully',
+  'Override kuota API key berhasil diperbarui': 'API key rate limit override updated successfully',
+  'Override kuota harus bilangan bulat': 'Rate limit override must be a whole number',
+  'Override kuota harus lebih dari 0': 'Rate limit override must be greater than 0',
   'Tenant pemilik API key ini tidak ditemukan atau sedang tidak aktif':
     'The tenant that owns this API key was not found or is currently inactive',
   'Tenant berhasil dibuat': 'Tenant created successfully',

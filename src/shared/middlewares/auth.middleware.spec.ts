@@ -106,6 +106,7 @@ describe('authMiddleware', () => {
       tenantId: 'tenant-acme',
       scopes: [],
       expiresAt: null,
+      rateLimitOverridePerMinute: null,
     });
     resolveTenantPlanSafeMock.mockResolvedValue('FREE');
     findByIdMock.mockResolvedValue({ id: 'user-1', email: 'budi@example.com', role: 'USER' });
@@ -114,7 +115,26 @@ describe('authMiddleware', () => {
     await authMiddleware(createMockReq('Bearer bfk_abc123'), {} as Response, next);
 
     expect(resolveTenantPlanSafeMock).toHaveBeenCalledWith('tenant-acme');
-    expect(enforceGatewayMock).toHaveBeenCalledWith('key-1', 'FREE');
+    expect(enforceGatewayMock).toHaveBeenCalledWith('key-1', 'FREE', null);
+    expect(next).toHaveBeenCalledWith();
+  });
+
+  it('T4 — rateLimitOverridePerMinute dari authenticate() diteruskan apa adanya ke enforcePartnerApiGatewayLimit (TANPA query tambahan)', async () => {
+    apiKeyAuthenticateMock.mockResolvedValue({
+      apiKeyId: 'key-1',
+      userId: 'user-1',
+      tenantId: 'tenant-acme',
+      scopes: [],
+      expiresAt: null,
+      rateLimitOverridePerMinute: 750,
+    });
+    resolveTenantPlanSafeMock.mockResolvedValue('FREE');
+    findByIdMock.mockResolvedValue({ id: 'user-1', email: 'budi@example.com', role: 'USER' });
+
+    const next = jest.fn() as NextFunction;
+    await authMiddleware(createMockReq('Bearer bfk_abc123'), {} as Response, next);
+
+    expect(enforceGatewayMock).toHaveBeenCalledWith('key-1', 'FREE', 750);
     expect(next).toHaveBeenCalledWith();
   });
 

@@ -25,6 +25,7 @@ describe('ApiKeyService', () => {
     expiresAt: null,
     revokedAt: null,
     createdAt: new Date(),
+    rateLimitOverridePerMinute: null,
   };
 
   beforeEach(() => {
@@ -33,7 +34,9 @@ describe('ApiKeyService', () => {
       findByHash: jest.fn(),
       findManyForUser: jest.fn(),
       findByIdForUser: jest.fn(),
+      findById: jest.fn(),
       revoke: jest.fn(),
+      updateRateLimitOverride: jest.fn(),
       touchLastUsed: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<ApiKeyRepository>;
 
@@ -117,6 +120,7 @@ describe('ApiKeyService', () => {
         tenantId: storedApiKey.tenantId,
         scopes: storedApiKey.scopes,
         expiresAt: null,
+        rateLimitOverridePerMinute: null,
       });
       expect(apiKeyRepository.touchLastUsed).toHaveBeenCalledWith(storedApiKey.id);
     });
@@ -131,6 +135,7 @@ describe('ApiKeyService', () => {
         tenantId: storedApiKey.tenantId,
         scopes: storedApiKey.scopes,
         expiresAt: null,
+        rateLimitOverridePerMinute: null,
       });
     });
 
@@ -140,6 +145,17 @@ describe('ApiKeyService', () => {
       const result = await apiKeyService.authenticate('bfk_x');
 
       expect(result.tenantId).toBe('tenant-acme');
+    });
+
+    it('T4 — mengembalikan rateLimitOverridePerMinute dari row yang sama (TANPA query tambahan)', async () => {
+      apiKeyRepository.findByHash.mockResolvedValue({
+        ...storedApiKey,
+        rateLimitOverridePerMinute: 500,
+      });
+
+      const result = await apiKeyService.authenticate('bfk_x');
+
+      expect(result.rateLimitOverridePerMinute).toBe(500);
     });
   });
 
@@ -162,6 +178,62 @@ describe('ApiKeyService', () => {
       apiKeyRepository.findByIdForUser.mockResolvedValue(storedApiKey);
       await apiKeyService.revoke(owner.id, storedApiKey.id);
       expect(apiKeyRepository.revoke).toHaveBeenCalledWith(storedApiKey.id);
+    });
+  });
+
+  describe('updateRateLimitOverride (T4)', () => {
+    it('melempar NotFoundError kalau key tidak ada, TANPA menulis apa pun', async () => {
+      apiKeyRepository.findById.mockResolvedValue(null);
+
+      await expect(apiKeyService.updateRateLimitOverride('key-x', 500)).rejects.toThrow(
+        NotFoundError
+      );
+      expect(apiKeyRepository.updateRateLimitOverride).not.toHaveBeenCalled();
+    });
+
+    it('TIDAK di-scope ke pemilik — bisa menjangkau key milik user MANA PUN (beda dari revoke)', async () => {
+      apiKeyRepository.findById.mockResolvedValue({ ...storedApiKey, userId: 'user-lain' });
+      apiKeyRepository.updateRateLimitOverride.mockResolvedValue({
+        ...storedApiKey,
+        userId: 'user-lain',
+        rateLimitOverridePerMinute: 500,
+      });
+
+      await apiKeyService.updateRateLimitOverride(storedApiKey.id, 500);
+
+      expect(apiKeyRepository.findById).toHaveBeenCalledWith(storedApiKey.id);
+      expect(apiKeyRepository.updateRateLimitOverride).toHaveBeenCalledWith(storedApiKey.id, 500);
+    });
+
+    it('mengembalikan nilai SEBELUMNYA (dibaca sebelum menulis) supaya controller bisa mencatat "dari -> ke" — pola sama seperti TenantService (T2/T3)', async () => {
+      apiKeyRepository.findById.mockResolvedValue({
+        ...storedApiKey,
+        rateLimitOverridePerMinute: 100,
+      });
+      apiKeyRepository.updateRateLimitOverride.mockResolvedValue({
+        ...storedApiKey,
+        rateLimitOverridePerMinute: 500,
+      });
+
+      const result = await apiKeyService.updateRateLimitOverride(storedApiKey.id, 500);
+
+      expect(result.previousValue).toBe(100);
+      expect(result.apiKey.rateLimitOverridePerMinute).toBe(500);
+    });
+
+    it('null MENGHAPUS override (kembali ke tier plan tenant)', async () => {
+      apiKeyRepository.findById.mockResolvedValue({
+        ...storedApiKey,
+        rateLimitOverridePerMinute: 500,
+      });
+      apiKeyRepository.updateRateLimitOverride.mockResolvedValue({
+        ...storedApiKey,
+        rateLimitOverridePerMinute: null,
+      });
+
+      await apiKeyService.updateRateLimitOverride(storedApiKey.id, null);
+
+      expect(apiKeyRepository.updateRateLimitOverride).toHaveBeenCalledWith(storedApiKey.id, null);
     });
   });
 });

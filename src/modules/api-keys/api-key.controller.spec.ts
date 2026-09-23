@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { ApiKeyController } from './api-key.controller';
 import type { ApiKeyService } from './api-key.service';
+import type { AuditService } from '../audit/audit.service';
 import { UnauthorizedError } from '../../shared/utils/http-error';
 
 function createMockResponse(): Response {
@@ -16,6 +17,7 @@ function createMockRequest(overrides: Record<string, unknown> = {}): Request {
 
 describe('ApiKeyController', () => {
   let apiKeyService: jest.Mocked<ApiKeyService>;
+  let auditService: jest.Mocked<AuditService>;
   let controller: ApiKeyController;
 
   beforeEach(() => {
@@ -23,8 +25,10 @@ describe('ApiKeyController', () => {
       create: jest.fn(),
       listForUser: jest.fn(),
       revoke: jest.fn(),
+      updateRateLimitOverride: jest.fn(),
     } as unknown as jest.Mocked<ApiKeyService>;
-    controller = new ApiKeyController(apiKeyService);
+    auditService = { logUpdate: jest.fn() } as unknown as jest.Mocked<AuditService>;
+    controller = new ApiKeyController(apiKeyService, auditService);
   });
 
   describe('create', () => {
@@ -105,6 +109,110 @@ describe('ApiKeyController', () => {
 
       await expect(controller.revoke(req, res)).rejects.toThrow(UnauthorizedError);
       expect(apiKeyService.revoke).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('updateRateLimitOverride (T4)', () => {
+    function reqFor(body: unknown, user: unknown = { id: 'admin-1' }) {
+      return createMockRequest({
+        params: { id: 'key-1' },
+        body,
+        user,
+        get: (header: string) => (header.toLowerCase() === 'user-agent' ? 'jest-agent' : undefined),
+        headers: { 'user-agent': 'jest-agent' },
+        ip: '10.0.0.7',
+        socket: { remoteAddress: '10.0.0.7' },
+      });
+    }
+
+    it('memvalidasi body, memanggil service dengan id dari URL, membalas 200', async () => {
+      const res = createMockResponse();
+      apiKeyService.updateRateLimitOverride.mockResolvedValue({
+        apiKey: { id: 'key-1', rateLimitOverridePerMinute: 500 },
+        previousValue: null,
+      } as never);
+
+      await controller.updateRateLimitOverride(reqFor({ rateLimitOverridePerMinute: 500 }), res);
+
+      expect(apiKeyService.updateRateLimitOverride).toHaveBeenCalledWith('key-1', 500);
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { id: 'key-1', rateLimitOverridePerMinute: 500 } })
+      );
+    });
+
+    it('mencatat audit UPDATE pada entity ApiKey: siapa (userId), dari nilai apa ke nilai apa', async () => {
+      const res = createMockResponse();
+      apiKeyService.updateRateLimitOverride.mockResolvedValue({
+        apiKey: { id: 'key-1', rateLimitOverridePerMinute: 500 },
+        previousValue: null,
+      } as never);
+
+      await controller.updateRateLimitOverride(reqFor({ rateLimitOverridePerMinute: 500 }), res);
+
+      expect(auditService.logUpdate).toHaveBeenCalledTimes(1);
+      expect(auditService.logUpdate).toHaveBeenCalledWith(
+        'ApiKey',
+        'key-1',
+        expect.objectContaining({ userId: 'admin-1', userAgent: 'jest-agent' }),
+        { field: 'rateLimitOverridePerMinute', from: null, to: 500 }
+      );
+    });
+
+    it('body null MENGHAPUS override — diteruskan ke service sebagai null, bukan ditolak validasi', async () => {
+      const res = createMockResponse();
+      apiKeyService.updateRateLimitOverride.mockResolvedValue({
+        apiKey: { id: 'key-1', rateLimitOverridePerMinute: null },
+        previousValue: 500,
+      } as never);
+
+      await controller.updateRateLimitOverride(reqFor({ rateLimitOverridePerMinute: null }), res);
+
+      expect(apiKeyService.updateRateLimitOverride).toHaveBeenCalledWith('key-1', null);
+      expect(auditService.logUpdate).toHaveBeenCalledWith('ApiKey', 'key-1', expect.anything(), {
+        field: 'rateLimitOverridePerMinute',
+        from: 500,
+        to: null,
+      });
+    });
+
+    it('nilai 0 atau negatif ditolak validasi, service DAN audit TIDAK dipanggil', async () => {
+      const res = createMockResponse();
+
+      await expect(
+        controller.updateRateLimitOverride(reqFor({ rateLimitOverridePerMinute: 0 }), res)
+      ).rejects.toThrow();
+      expect(apiKeyService.updateRateLimitOverride).not.toHaveBeenCalled();
+      expect(auditService.logUpdate).not.toHaveBeenCalled();
+    });
+
+    it('nilai desimal ditolak validasi (harus bilangan bulat)', async () => {
+      const res = createMockResponse();
+
+      await expect(
+        controller.updateRateLimitOverride(reqFor({ rateLimitOverridePerMinute: 12.5 }), res)
+      ).rejects.toThrow();
+      expect(apiKeyService.updateRateLimitOverride).not.toHaveBeenCalled();
+    });
+
+    it('service gagal (mis. key tidak ada): TIDAK ada audit dicatat untuk aksi yang tidak terjadi', async () => {
+      const res = createMockResponse();
+      apiKeyService.updateRateLimitOverride.mockRejectedValue(new Error('API key tidak ditemukan'));
+
+      await expect(
+        controller.updateRateLimitOverride(reqFor({ rateLimitOverridePerMinute: 500 }), res)
+      ).rejects.toThrow();
+      expect(auditService.logUpdate).not.toHaveBeenCalled();
+    });
+
+    it('tanpa req.user -> UnauthorizedError, tidak menulis apa pun', async () => {
+      const res = createMockResponse();
+
+      await expect(
+        controller.updateRateLimitOverride(reqFor({ rateLimitOverridePerMinute: 500 }, null), res)
+      ).rejects.toThrow(UnauthorizedError);
+      expect(apiKeyService.updateRateLimitOverride).not.toHaveBeenCalled();
+      expect(auditService.logUpdate).not.toHaveBeenCalled();
     });
   });
 });
