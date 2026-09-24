@@ -163,20 +163,33 @@ Ingat: header ini hanya PEMBERITAHUAN — perilaku endpoint tidak berubah.
   "dilayani" gagal. Kalau test itu gagal, jangan mengubah test-nya — putuskan dulu bagaimana tenant
   SSO yang ada dimigrasikan.
 
-  **Keputusan yang masih terbuka (milik pemilik project) untuk saat sunset v1.** Opsi:
-  - **A (rekomendasi): pertahankan path beku.** Saat `/api/v1` dinyatakan sunset, sisakan router
-    `/api/v1` MINIMAL yang hanya memuat `/auth/sso/:tenantSlug/login`, `/auth/sso/:tenantSlug/callback`,
-    dan `/auth/sso/consume` (dibuat dari `createApiRouter()` dan memakai `authRateLimiter`, lihat 2.5),
-    sementara sisa v1 mengembalikan `410 Gone`. Nol pekerjaan bagi tenant; biayanya satu router kecil
-    yang hidup selamanya dan kewajiban tetap merawat tiga endpoint itu.
-  - **B: migrasi tenant.** Dukung dua `redirect_uri` sekaligus selama masa transisi (mis. field
-    per-koneksi yang memilih versi URL), minta tiap admin tenant mendaftarkan URL baru, lalu matikan yang
-    lama. Bersih di akhir, tetapi butuh perubahan skema, komunikasi ke tiap tenant, dan tenggat yang tidak
-    bisa kita paksakan.
-  - **C: alias tak-berversi** (mis. `/auth/sso/...` di luar `/api/vN`) dan hanya untuk tenant BARU. Tidak
-    menyelesaikan tenant yang sudah terdaftar, jadi hanya berguna digabung dengan A atau B.
-  Belum ada yang diterapkan; sampai ada keputusan, satu-satunya perilaku yang dijamin adalah yang dikunci
-  test di atas.
+  **KEPUTUSAN (T7, diambil): Opsi A — pertahankan path beku.** Saat `/api/v1`
+  suatu saat dinyatakan sunset (BELUM terjadi — lihat catatan eksekusi di
+  bawah), sisakan router `/api/v1` MINIMAL yang hanya memuat
+  `/auth/sso/:tenantSlug/login`, `/auth/sso/:tenantSlug/callback`, dan
+  `/auth/sso/consume` (dibuat dari `createApiRouter()` dan memakai
+  `authRateLimiter`, lihat 2.5), sementara sisa v1 mengembalikan `410 Gone`.
+  Nol pekerjaan bagi tenant existing; biayanya satu router kecil yang hidup
+  selamanya dan kewajiban tetap merawat tiga endpoint itu. Dipilih di atas
+  B (migrasi tenant — butuh koordinasi ke tiap admin tenant mendaftarkan
+  `redirect_uri` baru di IdP-nya, tenggat yang tidak bisa kita paksakan,
+  dan risiko terbesar: tenant yang telat migrasi = SEMUA user tenant itu
+  gagal login) dan C (alias tak-berversi — cuma menyelesaikan tenant BARU,
+  tidak menyelesaikan yang sudah terdaftar sama sekali). Prinsip yang sama
+  dengan keputusan desain lain di project ini (mis. DR/T19, CI/T9): lebih
+  baik gagal aman & dapat diprediksi daripada elegan tapi bergantung
+  koordinasi pihak luar yang tidak bisa dijamin.
+
+  **CATATAN EKSEKUSI — BELUM ada yang perlu dikerjakan sekarang.** Keputusan
+  di atas adalah kebijakan untuk SAAT `/api/v1` disunset — dan `/api/v2`
+  sendiri BELUM PERNAH dibangun (§2.5 masih panduan "cara menambahkan",
+  bukan implementasi). Menjalankan Opsi A sekarang berarti mematikan
+  SELURUH v1 aktif tanpa ada v2 sebagai penggantinya bagi klien — itu bukan
+  sunset, itu merusak API yang masih dipakai. Opsi A baru dieksekusi sebagai
+  kode NANTI, di titik `/api/v2` benar-benar mulai dibangun dan sunset v1
+  sungguhan direncanakan. Sampai saat itu, satu-satunya perilaku yang
+  dijamin tetap yang dikunci test di atas (T7) — tidak ada perubahan kode
+  dari keputusan ini.
 - **`/api/v1/internal/alertmanager-webhook`**: internal, tapi hardcoded di
   `alertmanager.yml`. Kalau v1 dimatikan, ubah konfigurasi Alertmanager dulu.
 
