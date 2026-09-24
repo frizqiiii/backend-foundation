@@ -148,6 +148,24 @@ describe('withRetry', () => {
     ).rejects.toThrow('tidak boleh diulang');
     expect(fn).toHaveBeenCalledTimes(1);
   });
+
+  it('T-mutation (id=147) — percobaan TERAKHIR yang gagal TIDAK menghitung delay & TIDAK log "retry dalam Xms" (karena memang tidak akan ada retry lagi) — hanya attempts-1 kali logger.warn, bukan attempts kali', async () => {
+    const fn = jest.fn().mockRejectedValue(new Error('selalu gagal'));
+
+    await expect(withRetry(fn, { attempts: 3, baseDelayMs: 5 }, 'proses-uji')).rejects.toThrow(
+      'selalu gagal'
+    );
+
+    // 3 percobaan total, tapi HANYA 2 yang benar-benar "retry" (attempt
+    // 1 dan 2 gagal -> log & delay sebelum coba lagi). Attempt ke-3
+    // (terakhir) gagal juga, tapi TIDAK ada percobaan berikutnya, jadi
+    // TIDAK boleh log "retry dalam Xms" untuk attempt ke-3.
+    expect(mockedLogger.warn).toHaveBeenCalledTimes(2);
+    expect(mockedLogger.warn).not.toHaveBeenCalledWith(
+      expect.objectContaining({ attempt: 3 }),
+      expect.anything()
+    );
+  });
 });
 
 describe('withCircuitBreaker', () => {
@@ -316,6 +334,42 @@ describe('withCircuitBreaker', () => {
     await expect(first).resolves.toBe('pulih');
     jest.useRealTimers();
   });
+
+  it('T-mutation (id=48) — TEPAT di batas resetTimeoutMs (bukan lewat), breaker SUDAH transisi ke HALF_OPEN (batasnya "<", bukan "<=" yang akan menahan satu tick lebih lama)', async () => {
+    const key = 'test-key-mutation-48';
+    const fn = jest.fn().mockRejectedValue(new Error('down'));
+
+    for (let i = 0; i < options.failureThreshold; i++) {
+      await expect(withCircuitBreaker(key, fn, options)).rejects.toThrow('down');
+    }
+
+    jest.useFakeTimers();
+    // PERSIS resetTimeoutMs, BUKAN +1 — dengan "<" (asli), elapsed
+    // TIDAK LAGI lebih kecil dari resetTimeoutMs di titik ini, jadi
+    // breaker SUDAH masuk HALF_OPEN dan probe (fn) DIPANGGIL. Kalau
+    // mutan "<=" yang jalan, breaker masih dianggap OPEN satu tick
+    // lebih lama -> fn TIDAK dipanggil, malah CircuitOpenError.
+    jest.advanceTimersByTime(options.resetTimeoutMs);
+    fn.mockClear();
+
+    // Probe-nya gagal lagi ('down'), tapi yang penting fn BENAR-BENAR
+    // dipanggil (bukan ditolak CircuitOpenError) — itu bukti transisi
+    // HALF_OPEN sudah terjadi tepat di batas ini.
+    await expect(withCircuitBreaker(key, fn, options)).rejects.toThrow('down');
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    jest.useRealTimers();
+  });
+
+  it('T-mutation (id=65) — DUA pemanggilan sukses BERTURUT-TURUT pada breaker yang belum pernah gagal: logger.info "pulih" TIDAK BOLEH terpanggil di keduanya (bukan cuma yang pertama) — membuktikan breaker.state benar-benar tertulis "CLOSED" (bukan string lain) setiap sukses, supaya pemanggilan BERIKUTNYA tidak salah mengira baru saja "pulih" dari kondisi bukan-CLOSED', async () => {
+    const key = 'test-key-mutation-65';
+    const fn = jest.fn().mockResolvedValue('ok');
+
+    await expect(withCircuitBreaker(key, fn, options)).resolves.toBe('ok');
+    await expect(withCircuitBreaker(key, fn, options)).resolves.toBe('ok');
+
+    expect(mockedLogger.info).not.toHaveBeenCalledWith({ key }, expect.stringContaining('pulih'));
+  });
 });
 
 describe('withBulkhead', () => {
@@ -371,5 +425,22 @@ describe('withBulkhead', () => {
     await expect(occupying).resolves.toBe('slow-done');
     await expect(waiting).resolves.toBe('fast-done');
     expect(fastFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('T-mutation (id=25) — slot BENAR-BENAR terbebas setelah selesai: beberapa siklus occupy->selesai->occupy lagi berturut-turut TIDAK PERNAH menunggu/ditolak, membuktikan state.active dikurangi (bukan malah ditambah) tiap kali selesai', async () => {
+    const key = 'test-bh-mutation-25';
+    const fn = jest.fn().mockResolvedValue('ok');
+
+    // maxConcurrent: 1, maxQueue: 0 — kalau `state.active` SALAH
+    // ditambah (bukan dikurangi) tiap panggilan selesai, count-nya
+    // akan terus naik (1, 2, 3, ...) dan panggilan BERIKUTNYA akan
+    // langsung ditolak BulkheadRejectedError begitu count itu >=
+    // maxConcurrent — walau tidak ada satu pun panggilan yang benar-
+    // benar masih berjalan. 5 panggilan SEKUENSIAL (menunggu selesai
+    // dulu sebelum memanggil lagi) semuanya HARUS lolos tanpa error.
+    for (let i = 0; i < 5; i++) {
+      await expect(withBulkhead(key, fn, { maxConcurrent: 1, maxQueue: 0 })).resolves.toBe('ok');
+    }
+    expect(fn).toHaveBeenCalledTimes(5);
   });
 });
