@@ -96,6 +96,23 @@ describe('jwtHelper — MFA challenge token', () => {
     expect(decoded).toMatchObject({ type: 'mfa_challenge', userId: 'user-1' });
   });
 
+  it('T-mutation (id=355) — signMfaChallenge() MEMBAWA klaim exp yang pendek (~5 menit), TIDAK PERNAH tanpa kedaluwarsa sama sekali', () => {
+    const { jwtHelper } = require('./jwt');
+    const token = jwtHelper.signMfaChallenge('user-1');
+
+    // decode (bukan verify) — cukup untuk membaca klaim, tidak perlu
+    // secret. Kalau `expiresIn` hilang dari options (mutan `{}`),
+    // token TIDAK AKAN punya klaim `exp` sama sekali (token MFA yang
+    // tidak pernah kedaluwarsa — persis yang komentar kodenya sendiri
+    // bilang "SENGAJA pendek, cukup untuk buka authenticator app").
+    const decoded = jwt.decode(token) as { exp?: number };
+
+    expect(typeof decoded.exp).toBe('number');
+    const secondsFromNow = decoded.exp! - Math.floor(Date.now() / 1000);
+    expect(secondsFromNow).toBeGreaterThan(0);
+    expect(secondsFromNow).toBeLessThanOrEqual(5 * 60);
+  });
+
   it('P5 — verifyMfaChallenge() menolak access token BIASA (type bukan mfa_challenge), walau signature-nya valid', () => {
     const { jwtHelper } = require('./jwt');
     const regularAccessToken = jwtHelper.sign({
@@ -126,5 +143,43 @@ describe('jwtHelper — MFA challenge token', () => {
     );
 
     expect(() => jwtHelper.verify(tokenFromAttacker)).toThrow();
+  });
+
+  it('T-mutation (id=339) — MENOLAK token yang ditandatangani dengan secret yang SAMA tapi algoritma BERBEDA (HS384, bukan HS256) — membuktikan JWT_VERIFY_OPTIONS benar-benar membatasi algorithms, bukan objek kosong', () => {
+    delete process.env.JWT_SECRET_PREVIOUS;
+    jest.resetModules();
+    const { jwtHelper } = require('./jwt');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { env } = require('../config/env');
+    // Secret-nya PERSIS SAMA (bukan secret asing) — signature HMAC-nya
+    // valid secara matematis untuk secret ini. SATU-SATUNYA alasan ini
+    // harus ditolak adalah pembatasan `algorithms: ['HS256']` di
+    // JWT_VERIFY_OPTIONS. Kalau opsi itu jadi `{}` (mutan), jsonwebtoken
+    // TIDAK PUNYA alasan menolak token ini (dibuktikan manual: dengan
+    // opsi kosong, jwt.verify menerimanya tanpa error sama sekali).
+    const tokenWithDifferentAlgorithm = jwt.sign(
+      { id: 'user-1', email: 'budi@example.com', role: 'USER' },
+      env.JWT_SECRET,
+      { algorithm: 'HS384' }
+    );
+
+    expect(() => jwtHelper.verify(tokenWithDifferentAlgorithm)).toThrow('invalid algorithm');
+  });
+
+  it('T-mutation (id=339, jalur verifyMfaChallenge) — pembatasan algorithms yang sama juga berlaku di verifyMfaChallenge (satu konstanta JWT_VERIFY_OPTIONS dipakai keduanya)', () => {
+    delete process.env.JWT_SECRET_PREVIOUS;
+    jest.resetModules();
+    const { jwtHelper } = require('./jwt');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { env } = require('../config/env');
+    const tokenWithDifferentAlgorithm = jwt.sign(
+      { type: 'mfa_challenge', userId: 'user-1' },
+      env.JWT_SECRET,
+      { algorithm: 'HS384' }
+    );
+
+    expect(() => jwtHelper.verifyMfaChallenge(tokenWithDifferentAlgorithm)).toThrow(
+      'invalid algorithm'
+    );
   });
 });
