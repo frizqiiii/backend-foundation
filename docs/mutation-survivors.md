@@ -115,3 +115,28 @@ pada guard yang sama terbukti mati lewat test yang SAMA (menegaskan tidak ada lo
 warning error TypeError akibat `redisClient` null diakses).
 
 Suite naik ke **161 suite / 1337 test** (+5), nol regresi.
+
+## `jwt.ts` (2 survivor, keduanya diperbaiki — langsung menyerang pertahanan keamanan eksplisit)
+
+Kedua survivor ini beda dari yang sebelumnya: bukan kelalaian test biasa, tapi langsung
+menghilangkan pertahanan keamanan yang SENGAJA ditulis eksplisit (komentar file: "Algorithm
+DIPIN eksplisit ke HS256 ... pertahanan berlapis terhadap algorithm confusion attack, sesuai
+rekomendasi OWASP ASVS").
+
+### id=339 — `JWT_VERIFY_OPTIONS = { algorithms: ['HS256'] }` → `{}`
+Test lama hanya menguji token dengan SECRET salah, tidak pernah dengan ALGORITMA berbeda tapi
+secret yang SAMA. Dibuktikan manual (`node -e`, di luar test) sebelum menulis fix: token
+ditandatangani `HS384` dengan secret yang identik — `jwt.verify(..., {algorithms:['HS256']})`
+menolak ("invalid algorithm"), tapi `jwt.verify(..., {})` MENERIMA tanpa error sama sekali.
+Ini konstanta yang sama dipakai `verify()` (access token) DAN `verifyMfaChallenge()` — dua
+test ditulis, satu untuk masing-masing jalur.
+
+### id=355 — opsi `signMfaChallenge` (`{expiresIn, algorithm}`) → `{}`
+Test lama tidak pernah memeriksa klaim `exp` pada token MFA challenge — kalau `expiresIn`
+hilang, token MFA (yang menurut komentarnya sendiri "SENGAJA pendek, cukup buka authenticator
+app") jadi TIDAK PERNAH KEDALUWARSA sama sekali. Test baru men-decode (bukan verify) token,
+menegaskan `exp` ada dan dalam rentang 0–5 menit dari sekarang.
+
+Kedua mutan dibuktikan mati lewat mutasi manual (diterapkan, test gagal persis seperti
+diharapkan, source dikembalikan — `diff` bersih). Suite naik ke **161 suite / 1340 test**
+(+3), nol regresi.
