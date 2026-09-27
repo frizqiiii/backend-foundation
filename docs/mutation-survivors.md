@@ -140,3 +140,38 @@ menegaskan `exp` ada dan dalam rentang 0–5 menit dari sekarang.
 Kedua mutan dibuktikan mati lewat mutasi manual (diterapkan, test gagal persis seperti
 diharapkan, source dikembalikan — `diff` bersih). Suite naik ke **161 suite / 1340 test**
 (+3), nol regresi.
+
+## `cache-keys.ts` (2 survivor, keduanya diperbaiki — celah dari pekerjaan T3/T4 sendiri)
+
+`tenantPlanById`/`tenantStatusById` — fungsi yang dibangun sendiri saat T3/T4, TIDAK PERNAH
+diberi test (lupa, bukan disengaja). Mutan (`StringLiteral` → template kosong ``) berarti
+key cache-nya jadi KONSTANTA yang sama untuk SEMUA tenant — kalau ini benar-benar rusak,
+plan/status satu tenant bisa tertimpa atau bocor ke tenant lain lewat cache. Diperbaiki
+dengan 2 assertion tambahan: key membawa `tenantId` yang benar, DAN dua tenant berbeda
+menghasilkan key yang berbeda (bukan cuma format string-nya benar untuk satu kasus).
+Keduanya dibuktikan mati lewat mutasi manual.
+
+## `response.ts` (1 survivor) dan `user-agent.ts` (2 survivor) — TIDAK diperbaiki, equivalent
+
+### `response.ts` id=375 — `if (meta) { body.meta = meta }` → `if (true) {...}`
+Diperiksa: `res.json(body)` di Express memanggil `JSON.stringify` di baliknya, dan
+`JSON.stringify` MEMBUANG properti bernilai `undefined` dari hasil serialisasi. Jadi kalau
+`meta` tidak diberikan (`undefined`), `body.meta = undefined` (versi mutan) menghasilkan
+JSON PERSIS SAMA di atas kabel dengan `body` yang sama sekali tidak punya properti `meta`
+(versi asli) — dikonfirmasi juga secara terpisah bahwa `toEqual`/`toHaveBeenCalledWith` Jest
+menganggap `{a:1, meta:undefined}` SAMA DENGAN `{a:1}`. Bisa dipaksa "mati" pakai
+`toStrictEqual`, tapi itu tidak melindungi dari bug produksi apa pun — responsnya identik
+persis di sisi klien manapun. Dibiarkan, dengan alasan ini dicatat di sini.
+
+### `user-agent.ts` id=419/420 — guard `if (!userAgent) {...}` di awal `parseUserAgent`
+**Dibuktikan equivalent secara empiris, bukan cuma dianalisis**: guard-nya dihapus TOTAL dari
+source, lalu SELURUH 26 test yang ada (termasuk 2 test yang KHUSUS menyasar `userAgent=null`
+dan `userAgent=''`) dijalankan — semuanya tetap lolos tanpa perubahan. Penyebabnya:
+`RegExp.test()` meng-coerce argumennya jadi string, dan baik `null` (jadi teks `"null"`)
+maupun `''` tidak pernah cocok dengan pola BROWSER_PATTERNS/OS_PATTERNS manapun — hasil
+akhirnya SELALU jatuh ke fallback `'Perangkat tidak dikenal'` yang sama, dengan atau tanpa
+guard ini. Domain tipe parameter (`string | null`) tidak menyisakan input yang bisa
+membedakan keduanya. TIDAK dihapus (kode ini tetap jelas/eksplisit untuk pembaca manusia),
+TIDAK dipaksakan test buatan.
+
+Suite naik ke **161 suite / 1342 test** (+2, hanya dari `cache-keys.ts`), nol regresi.
