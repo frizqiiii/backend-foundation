@@ -175,3 +175,79 @@ membedakan keduanya. TIDAK dihapus (kode ini tetap jelas/eksplisit untuk pembaca
 TIDAK dipaksakan test buatan.
 
 Suite naik ke **161 suite / 1342 test** (+2, hanya dari `cache-keys.ts`), nol regresi.
+
+## `export.ts` (15 survivor — file TERAKHIR, sesuai urutan risiko yang disepakati)
+
+Awalnya diasumsikan "cuma tata letak PDF, risiko rendah karena kelihatan visual kalau
+salah" — ternyata SEBAGIAN survivor di sini ada di logika **paginasi** (kapan halaman baru
+dibuka), yang kalau rusak bisa membuat header kolom hilang diam-diam di halaman 2+ tanpa
+ada yang sadar. Investigasi file ini juga mengungkap satu **temuan arsitektur nyata**
+(lihat bawah) yang mengubah total pendekatan pengujiannya.
+
+### Temuan penting SEBELUM menulis fix apa pun: pdfkit PUNYA auto-pagination sendiri
+Dibuktikan empiris (skrip node terpisah): dengan 200 baris teks, PDF tetap terbentuk 5
+halaman **walau cek paginasi manual di `export.ts` dihapus TOTAL dari kode**. Artinya nilai
+SEBENARNYA dari blok manual `if (doc.y > PAGE_BOTTOM_Y - 20) { doc.addPage(); drawHeaderRow(); }`
+BUKAN "menambah halaman" (itu sudah otomatis dilakukan pdfkit sendiri) — tapi **menggambar
+ulang header kolom di halaman baru**. Tanpa pemahaman ini, test Y-boundary yang saya tulis
+pertama kali GAGAL mendiskriminasi mutan manapun (pdfkit's auto-break menutupi efeknya).
+Setelah paham, semua test paginasi ditulis ulang untuk menghitung **kemunculan header "ID"
+di seluruh halaman**, bukan posisi Y baris data.
+
+### Diperbaiki (10 dari 15)
+- **id=287** — `doc.on('error', reject)` → `''`. Wiring stream-error diuji dengan
+  `jest.spyOn(PDFDocument.prototype, 'on')`, menangkap handler yang benar-benar
+  didaftarkan, memanggilnya manual dengan error palsu, membuktikan Promise `toPdfBuffer`
+  benar-benar reject (bukan diam-diam menggantung selamanya kalau pdfkit gagal internal).
+- **id=288** — `PAGE_BOTTOM_Y = height - margin` → `height + margin` (arah salah).
+- **id=297/id=320** — options object `{width, ellipsis}` untuk header DAN data row → `{}`
+  total (BUKAN cuma `ellipsis`-nya, seluruh objeknya). Dibuktikan BEDA dari
+  id=298/321 (lihat "equivalent" di bawah): menghapus `width` membuat teks panjang TIDAK
+  membungkus sama sekali. Sempat gagal 2x karena bug di test SENDIRI (kolom terakhir
+  kebetulan lebar-sisa-ke-tepi ≈ columnWidth — pindah ke kolom tengah; lalu filter X
+  ikut menangkap sel DATA di kolom yang sama — dikecualikan eksplisit) — dicatat supaya
+  tidak terulang.
+- **id=307/id=308** — kondisi paginasi dipaksa `false`/`true`.
+- **id=310** — `>` → `<=` (kebalikan total, paginasi jadi terpicu di HAMPIR setiap baris).
+- **id=311** — ambang `-20` → `+20`.
+- **id=312** — seluruh blok paginasi dikosongkan.
+- **id=317** — `value === null ? '' : ...` → placeholder teks Stryker. Dibuktikan dulu
+  secara empiris: pdfkit TIDAK menerbitkan operator gambar teks apa pun untuk string
+  kosong — jadi test-nya menegaskan TIDAK ADA cell di kolom itu sama sekali untuk baris
+  bernilai `null`, bukan cuma "isinya bukan 'null'".
+
+Semua 10 dibuktikan mati lewat mutasi manual satu per satu (diterapkan, test gagal, source
+dikembalikan — `diff` bersih setiap kali).
+
+### Equivalent, TIDAK diperbaiki (4 dari 15) — dibuktikan empiris, bukan diasumsikan
+- **id=298/id=321** — `ellipsis: true` → `false` (di header maupun data row).
+  Dibuktikan lewat probe pdfkit langsung: opsi `ellipsis` HANYA berpengaruh kalau
+  dikombinasikan dengan `height` (membatasi jumlah baris) — export.ts TIDAK PERNAH
+  memberi `height` di satu pun pemanggilan `.text()`-nya, jadi `ellipsis` sudah tidak
+  berefek sama sekali di penggunaan SEKARANG, terlepas dari nilainya. Dites dengan
+  string yang identik: `{width:60, ellipsis:true}` vs `{width:60}` menghasilkan content
+  stream PDF byte-identik.
+- **id=301/id=302** — `.text(title, {align:'left'})` → `{}` / `'left'` → `''`.
+  Dibuktikan byte-identik: `'left'` ADALAH default alignment pdfkit sendiri, jadi
+  memberi eksplisit `align:'left'` sama sekali tidak berbeda dari tidak memberi opsi
+  apa pun.
+
+### TIDAK dapat dipraktiskan untuk dibunuh (1 dari 15)
+- **id=309** — `doc.y > PAGE_BOTTOM_Y - 20` → `doc.y >= PAGE_BOTTOM_Y - 20`. Secara
+  teknis BEDA dari `>`, tapi bedanya HANYA terlihat kalau `doc.y` PERSIS SAMA (ke banyak
+  angka desimal) dengan ambang batas — posisi Y bergantung metrik font internal pdfkit
+  yang tidak dikontrol presisi dari luar tanpa mereplikasi algoritma pengukuran teksnya
+  sendiri. Beda dari batas waktu (`circuit-breaker.ts` id=48, dikontrol presisi lewat
+  `jest.advanceTimersByTime`), tidak ada mekanisme presisi setara untuk posisi Y pdfkit.
+  Diterima sebagai batas praktis — cakupan inti paginasi sudah tertutup lewat 6 mutan
+  lain di klaster yang sama.
+
+Suite naik ke **161 suite / 1347 test** (+5), nol regresi.
+
+---
+
+**Ringkasan akhir seluruh mutation survivor (Fase 3.5):** dari 37 survivor awal (skor
+91.15%), diperbaiki 20 dengan bukti mutasi manual, 9 dibuktikan equivalent (bukan
+diasumsikan — masing-masing punya bukti empiris terpisah), 1 diterima sebagai batas
+praktis (boundary presisi floating-point yang tidak terjangkau tanpa rekayasa berlebihan).
+Tidak ada survivor yang dibiarkan tanpa investigasi atau alasan tertulis.
