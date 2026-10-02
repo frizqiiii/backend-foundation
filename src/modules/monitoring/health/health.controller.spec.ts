@@ -20,7 +20,14 @@ jest.mock('../../../shared/queue/connection', () => ({
 import { prisma } from '../../../shared/config/database';
 import { redisClient } from '../../../shared/config/redis';
 import { queueConnection } from '../../../shared/queue/connection';
-import { getHealth, getReadiness } from './health.controller';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import {
+  getHealth,
+  getReadiness,
+  OPTIONAL_DEPENDENCY_TIMEOUT_MS,
+  REQUIRED_DEPENDENCY_TIMEOUT_MS,
+} from './health.controller';
 
 const mockedQueryRaw = prisma.$queryRaw as unknown as jest.Mock;
 const mockedRedisPing = (redisClient as unknown as { ping: jest.Mock }).ping;
@@ -139,6 +146,48 @@ describe('Health controller', () => {
       } finally {
         jest.useRealTimers();
       }
+    });
+
+    it('Redis dan Queue yang MENGGANTUNG dianggap gagal setelah timeout dependency OPSIONAL (1000ms), BUKAN 3000ms — /ready tetap 200 ready', async () => {
+      jest.useFakeTimers();
+      try {
+        mockedQueryRaw.mockResolvedValueOnce([{ '?column?': 1 }]);
+        mockedRedisPing.mockImplementationOnce(() => new Promise(() => {})); // tidak pernah resolve
+        mockedQueuePing.mockImplementationOnce(() => new Promise(() => {})); // tidak pernah resolve
+        const res = createMockResponse();
+
+        const readinessPromise = getReadiness({} as Request, res);
+        await jest.advanceTimersByTimeAsync(OPTIONAL_DEPENDENCY_TIMEOUT_MS);
+        await readinessPromise;
+
+        expect(res.status).toHaveBeenCalledWith(200);
+        expect(res.json).toHaveBeenCalledWith(
+          expect.objectContaining({
+            status: 'ready',
+            checks: expect.objectContaining({
+              database: expect.objectContaining({ status: 'ok' }),
+              redis: expect.objectContaining({ status: 'error' }),
+              queue: expect.objectContaining({ status: 'error' }),
+            }),
+          })
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('KONTRAK — timeout dependency OPSIONAL harus JAUH di bawah readinessProbe.timeoutSeconds di Helm (kalau tidak, Redis mati bisa menjatuhkan probe Kubernetes)', () => {
+      const deployment = readFileSync(
+        join(__dirname, '../../../../helm/backend-foundation/templates/deployment.yaml'),
+        'utf8'
+      );
+      const match = /readinessProbe:[\s\S]*?timeoutSeconds:\s*(\d+)/.exec(deployment);
+      expect(match).not.toBeNull();
+      const probeTimeoutMs = Number(match?.[1]) * 1000;
+
+      expect(OPTIONAL_DEPENDENCY_TIMEOUT_MS).toBeLessThanOrEqual(probeTimeoutMs / 2);
+      // dependency wajib boleh mepet (database menggantung memang = tidak siap), tapi jangan melebihi probe
+      expect(REQUIRED_DEPENDENCY_TIMEOUT_MS).toBeLessThanOrEqual(probeTimeoutMs);
     });
 
     it('P5 — mengembalikan "Unknown error" kalau yang dilempar dependency BUKAN instance Error (mis. string mentah)', async () => {

@@ -33,6 +33,20 @@ export function getHealth(_req: Request, res: Response): void {
   });
 }
 
+/**
+ * Batas waktu pengecekan per jenis dependency di `/ready`.
+ *
+ * `/ready` menjalankan semua pengecekan PARALEL, jadi latensinya = pengecekan TERLAMBAT. Kalau
+ * dependency OPSIONAL (Redis, queue) mati, koneksi BullMQ (`maxRetriesPerRequest: null`, wajib dari
+ * BullMQ) membuat `ping()` menggantung sampai timeout — dan itu sebelumnya 3000ms, SAMA dengan
+ * `readinessProbe.timeoutSeconds: 3` di Helm. Akibatnya probe Kubernetes bisa gagal hanya karena
+ * dependency yang didokumentasikan "opsional" mati. Dependency opsional karenanya HARUS punya timeout
+ * JAUH di bawah timeout probe (dijaga test kontrak di `health.controller.spec.ts`). PostgreSQL (wajib)
+ * tetap 3000ms: kalau database menggantung, instance memang pantas dianggap tidak siap.
+ */
+export const REQUIRED_DEPENDENCY_TIMEOUT_MS = 3000;
+export const OPTIONAL_DEPENDENCY_TIMEOUT_MS = 1000;
+
 interface DependencyCheckResult {
   status: 'ok' | 'error' | 'not_configured';
   latencyMs?: number;
@@ -48,7 +62,7 @@ interface DependencyCheckResult {
 async function checkDependency(
   name: string,
   check: () => Promise<void>,
-  timeoutMs = 3000
+  timeoutMs = REQUIRED_DEPENDENCY_TIMEOUT_MS
 ): Promise<DependencyCheckResult> {
   const startedAtCheck = process.hrtime.bigint();
   try {
@@ -143,14 +157,22 @@ export async function getReadiness(_req: Request, res: Response): Promise<void> 
       await prisma.$queryRaw`SELECT 1`;
     }),
     redis
-      ? checkDependency('redis', async () => {
-          await redis.ping();
-        })
+      ? checkDependency(
+          'redis',
+          async () => {
+            await redis.ping();
+          },
+          OPTIONAL_DEPENDENCY_TIMEOUT_MS
+        )
       : Promise.resolve<DependencyCheckResult>({ status: 'not_configured' }),
     queue
-      ? checkDependency('queue', async () => {
-          await queue.ping();
-        })
+      ? checkDependency(
+          'queue',
+          async () => {
+            await queue.ping();
+          },
+          OPTIONAL_DEPENDENCY_TIMEOUT_MS
+        )
       : Promise.resolve<DependencyCheckResult>({ status: 'not_configured' }),
   ]);
 
