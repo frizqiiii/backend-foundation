@@ -14,6 +14,13 @@ const prisma = new PrismaClient();
 
 const SEED_PASSWORD = 'Password123'; // sama untuk semua akun seed — HANYA untuk development
 
+// Akun seed adalah akun development yang harus langsung bisa dipakai login. `AuthService.login`
+// menolak akun dengan `emailVerifiedAt = null` (403 "Email belum diverifikasi"), dan akun seed
+// tidak punya alur email nyata untuk memverifikasi diri — jadi seed menandainya terverifikasi.
+// Diisi juga di `update` (bukan hanya `create`) supaya database yang SUDAH pernah di-seed sebelum
+// perbaikan ini ikut terperbaiki saat seed dijalankan ulang.
+const SEED_EMAIL_VERIFIED_AT = new Date();
+
 async function main() {
   const passwordHash = await bcrypt.hash(SEED_PASSWORD, 10);
 
@@ -45,9 +52,10 @@ async function main() {
 
   const admin = await prisma.user.upsert({
     where: { email: 'admin@example.com' },
-    update: {},
+    update: { emailVerifiedAt: SEED_EMAIL_VERIFIED_AT },
     create: {
       email: 'admin@example.com',
+      emailVerifiedAt: SEED_EMAIL_VERIFIED_AT,
       password: passwordHash,
       name: 'Admin Utama',
       role: 'ADMIN',
@@ -57,9 +65,10 @@ async function main() {
 
   const organizer = await prisma.user.upsert({
     where: { email: 'organizer@example.com' },
-    update: {},
+    update: { emailVerifiedAt: SEED_EMAIL_VERIFIED_AT },
     create: {
       email: 'organizer@example.com',
+      emailVerifiedAt: SEED_EMAIL_VERIFIED_AT,
       password: passwordHash,
       name: 'Budi Organizer',
       role: 'ORGANIZER',
@@ -69,9 +78,10 @@ async function main() {
 
   const regularUser = await prisma.user.upsert({
     where: { email: 'user@example.com' },
-    update: {},
+    update: { emailVerifiedAt: SEED_EMAIL_VERIFIED_AT },
     create: {
       email: 'user@example.com',
+      emailVerifiedAt: SEED_EMAIL_VERIFIED_AT,
       password: passwordHash,
       name: 'Sari Pengguna',
       role: 'USER',
@@ -84,9 +94,10 @@ async function main() {
   // verifikasi di respons/dokumentasi Phase 11).
   const acmeUser = await prisma.user.upsert({
     where: { email: 'user@acme.example.com' },
-    update: {},
+    update: { emailVerifiedAt: SEED_EMAIL_VERIFIED_AT },
     create: {
       email: 'user@acme.example.com',
+      emailVerifiedAt: SEED_EMAIL_VERIFIED_AT,
       password: passwordHash,
       name: 'Acme Demo User',
       role: 'USER',
