@@ -94,84 +94,92 @@ async function main() {
     },
   });
 
-  await prisma.product.upsert({
-    where: { id: 'seed-product-keyboard' },
-    update: {},
-    create: {
-      id: 'seed-product-keyboard',
-      title: 'Keyboard Mekanik 60%',
-      description: 'Keyboard mekanik compact dengan switch hot-swappable.',
-      price: 850000,
-      category: 'FEATURED',
-      status: 'ACTIVE',
-      stock: 12,
-      userId: regularUser.id,
-      tenantId: defaultTenant.id,
-    },
-  });
+  // products & events berada di bawah RLS (FORCE ROW LEVEL SECURITY, migration
+  // 20260913120000_enable_rls_multi_tenancy). Tanpa tenant context ATAU bypass, upsert di
+  // bawah ini ditolak database. Seed adalah operasi internal lintas-tenant yang disengaja,
+  // jadi memakai `app.bypass_rls` (transaction-local: `true` = hanya berlaku di transaksi ini).
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.bypass_rls', 'on', true)`;
 
-  await prisma.product.upsert({
-    where: { id: 'seed-product-mouse' },
-    update: {},
-    create: {
-      id: 'seed-product-mouse',
-      title: 'Mouse Wireless Ergonomis',
-      description: 'Mouse wireless dengan baterai tahan hingga 3 bulan.',
-      price: 320000,
-      category: 'STANDARD',
-      status: 'ACTIVE',
-      stock: 25,
-      userId: regularUser.id,
-      tenantId: defaultTenant.id,
-    },
-  });
+    await tx.product.upsert({
+      where: { id: 'seed-product-keyboard' },
+      update: {},
+      create: {
+        id: 'seed-product-keyboard',
+        title: 'Keyboard Mekanik 60%',
+        description: 'Keyboard mekanik compact dengan switch hot-swappable.',
+        price: 850000,
+        category: 'FEATURED',
+        status: 'ACTIVE',
+        stock: 12,
+        userId: regularUser.id,
+        tenantId: defaultTenant.id,
+      },
+    });
 
-  // Produk demo milik tenant "acme" — HARUS tidak pernah muncul saat
-  // listing dengan header `X-Tenant-ID: default`, dan sebaliknya.
-  await prisma.product.upsert({
-    where: { id: 'seed-product-acme-monitor' },
-    update: {},
-    create: {
-      id: 'seed-product-acme-monitor',
-      title: 'Monitor 27" 144Hz',
-      description: 'Monitor gaming milik tenant Acme — produk demo isolasi tenant.',
-      price: 3200000,
-      category: 'FEATURED',
-      status: 'ACTIVE',
-      stock: 5,
-      userId: acmeUser.id,
-      tenantId: acmeTenant.id,
-    },
-  });
+    await tx.product.upsert({
+      where: { id: 'seed-product-mouse' },
+      update: {},
+      create: {
+        id: 'seed-product-mouse',
+        title: 'Mouse Wireless Ergonomis',
+        description: 'Mouse wireless dengan baterai tahan hingga 3 bulan.',
+        price: 320000,
+        category: 'STANDARD',
+        status: 'ACTIVE',
+        stock: 25,
+        userId: regularUser.id,
+        tenantId: defaultTenant.id,
+      },
+    });
 
-  await prisma.event.upsert({
-    where: { id: 'seed-event-conf' },
-    update: {},
-    create: {
-      id: 'seed-event-conf',
-      title: 'Konferensi TypeScript Indonesia 2026',
-      description: 'Konferensi tahunan seputar TypeScript dan backend modern.',
-      category: 'Teknologi',
-      location: 'Jakarta',
-      date: new Date('2026-11-15T09:00:00.000Z'),
-      ownerId: organizer.id,
-      tenantId: defaultTenant.id,
-    },
-  });
+    // Produk demo milik tenant "acme" — HARUS tidak pernah muncul saat
+    // listing dengan header `X-Tenant-ID: default`, dan sebaliknya.
+    await tx.product.upsert({
+      where: { id: 'seed-product-acme-monitor' },
+      update: {},
+      create: {
+        id: 'seed-product-acme-monitor',
+        title: 'Monitor 27" 144Hz',
+        description: 'Monitor gaming milik tenant Acme — produk demo isolasi tenant.',
+        price: 3200000,
+        category: 'FEATURED',
+        status: 'ACTIVE',
+        stock: 5,
+        userId: acmeUser.id,
+        tenantId: acmeTenant.id,
+      },
+    });
 
-  await prisma.event.upsert({
-    where: { id: 'seed-event-workshop' },
-    update: {},
-    create: {
-      id: 'seed-event-workshop',
-      title: 'Workshop Backend Security',
-      description: 'Workshop praktis hardening keamanan backend.',
-      category: 'Workshop',
-      location: 'Bandung',
-      date: new Date('2026-12-05T13:00:00.000Z'),
-      ownerId: organizer.id,
-      tenantId: defaultTenant.id,
-    },
+    await tx.event.upsert({
+      where: { id: 'seed-event-conf' },
+      update: {},
+      create: {
+        id: 'seed-event-conf',
+        title: 'Konferensi TypeScript Indonesia 2026',
+        description: 'Konferensi tahunan seputar TypeScript dan backend modern.',
+        category: 'Teknologi',
+        location: 'Jakarta',
+        date: new Date('2026-11-15T09:00:00.000Z'),
+        ownerId: organizer.id,
+        tenantId: defaultTenant.id,
+      },
+    });
+
+    await tx.event.upsert({
+      where: { id: 'seed-event-workshop' },
+      update: {},
+      create: {
+        id: 'seed-event-workshop',
+        title: 'Workshop Backend Security',
+        description: 'Workshop praktis hardening keamanan backend.',
+        category: 'Workshop',
+        location: 'Bandung',
+        date: new Date('2026-12-05T13:00:00.000Z'),
+        ownerId: organizer.id,
+        tenantId: defaultTenant.id,
+      },
+    });
   });
 
   console.log('Seed selesai:');
