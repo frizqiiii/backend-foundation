@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import PDFDocument from 'pdfkit';
 import zlib from 'zlib';
 import { toCsv, toXlsxBuffer, toPdfBuffer, type ExportColumn } from './export';
 
@@ -124,19 +125,27 @@ function extractPdfText(buffer: Buffer): { text: string; contentStreamCount: num
 }
 
 /**
- * Ekstensi `extractPdfText`: selain isi teks, juga tangkap POSISI X
+ * Ekstensi `extractPdfText`: selain isi teks, juga tangkap POSISI X dan Y
  * (dari operator `Tm`, sebelum tiap `Tj`/`TJ`) dan warna isi TERAKHIR
  * yang di-set sebelum teks itu (dari operator `scn` grayscale/RGB,
- * mengikuti `cs`). Ini yang dibutuhkan untuk menutup mutant di
+ * mengikuti `cs`). X dipakai untuk menutup mutant di
  * `columnWidth`/`startX` (posisi kolom salah = mutant kena) dan
- * `fillColor(...)` (warna salah = mutant kena) — dua kategori TERBESAR
- * dari mutant yang masih survive di `toPdfBuffer` sebelumnya (cuma
- * verifikasi ISI teks tidak cukup untuk menutup mutant TATA LETAK).
+ * `fillColor(...)` (warna salah = mutant kena). Y (Fase 3.5, T-mutation
+ * id=288/307/308/309/310/311/312) dipakai untuk menutup mutant di logika
+ * pagination `PAGE_BOTTOM_Y`/`doc.y > PAGE_BOTTOM_Y - 20` — verifikasi
+ * ISI teks & JUMLAH content stream saja TIDAK CUKUP (dibuktikan: dengan
+ * 200 baris, `PAGE_BOTTOM_Y` yang salah arah operatornya TETAP
+ * menghasilkan >1 content stream karena `doc.y` terus bertambah tanpa
+ * batas sampai akhirnya melewati ambang manapun — cuma TERLAMBAT,
+ * dengan baris-baris yang sudah digambar jauh di luar batas halaman
+ * yang SEBENARNYA sebelum itu).
  */
-function extractPdfCells(buffer: Buffer): Array<{ x: number; text: string; color: string | null }> {
+function extractPdfCells(
+  buffer: Buffer
+): Array<{ x: number; y: number; text: string; color: string | null }> {
   const raw = buffer.toString('latin1');
   const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
-  const cells: Array<{ x: number; text: string; color: string | null }> = [];
+  const cells: Array<{ x: number; y: number; text: string; color: string | null }> = [];
   let match: RegExpExecArray | null;
   while ((match = streamRegex.exec(raw)) !== null) {
     let inflated: string;
@@ -146,6 +155,7 @@ function extractPdfCells(buffer: Buffer): Array<{ x: number; text: string; color
       continue;
     }
     let lastX: number | null = null;
+    let lastY: number | null = null;
     let lastColor: string | null = null;
     for (const line of inflated.split('\n')) {
       const colorMatch =
@@ -154,20 +164,23 @@ function extractPdfCells(buffer: Buffer): Array<{ x: number; text: string; color
         lastColor = line.trim();
         continue;
       }
-      const tmMatch = line.match(/^[\d.-]+ [\d.-]+ [\d.-]+ [\d.-]+ ([\d.-]+) [\d.-]+ Tm$/);
+      const tmMatch = line.match(/^[\d.-]+ [\d.-]+ [\d.-]+ [\d.-]+ ([\d.-]+) ([\d.-]+) Tm$/);
       if (tmMatch) {
         lastX = parseFloat(tmMatch[1]);
+        lastY = parseFloat(tmMatch[2]);
         continue;
       }
       const textMatch = line.match(/^<([0-9a-fA-F]+)> 0 T[jJ]$|^\[<([0-9a-fA-F]+)>.*?\] TJ$/);
-      if (textMatch && lastX !== null) {
+      if (textMatch && lastX !== null && lastY !== null) {
         const hex = textMatch[1] || textMatch[2];
         cells.push({
           x: lastX,
+          y: lastY,
           text: Buffer.from(hex, 'hex').toString('latin1'),
           color: lastColor,
         });
         lastX = null;
+        lastY = null;
       }
     }
   }
@@ -278,5 +291,138 @@ describe('toPdfBuffer', () => {
     // jelas dari default/fillColor('black') -> (0, 0, 0).
     expect(dateLineCell?.color).toMatch(/^0\.50\d* 0\.50\d* 0\.50\d* scn$/);
     expect(headerCell?.color).not.toBe(dateLineCell?.color);
+  });
+
+  it('T-mutation (id=288/307/308/309/310/311/312) — SETIAP halaman baru yang dibuka lewat paginasi manual BENAR-BENAR mendapat header kolom digambar ulang (bukan cuma "halaman bertambah" — pdfkit PUNYA auto-pagination sendiri yang independen dari cek manual ini, dibuktikan terpisah; nilai SEBENARNYA dari blok manual ini adalah redraw header, dan itu yang harus diuji)', async () => {
+    const manyRows: Row[] = Array.from({ length: 60 }, (_, i) => ({
+      id: String(i),
+      name: `User ${i}`,
+      note: `Catatan baris ke-${i}`,
+    }));
+
+    const buffer = await toPdfBuffer(manyRows, columns, 'Laporan Besar');
+    const cells = extractPdfCells(buffer);
+    const { contentStreamCount } = extractPdfText(buffer);
+
+    const headerOccurrences = cells.filter((c) => c.text === 'ID').length;
+
+    // Dibuktikan lewat instrumentasi langsung (di luar test ini): dengan
+    // 60 baris & pengaturan halaman yang sama, paginasi manual yang
+    // BENAR menembak PERSIS SEKALI (di baris ke-34, sebelum baris
+    // terakhir habis) -> total 2 kemunculan header "ID" (halaman 1 +
+    // halaman baru itu). Mutant `id=288` (PAGE_BOTTOM_Y arah salah)
+    // membuat ambang batasnya jadi jauh di LUAR halaman (height+margin,
+    // bukan height-margin) sehingga cek manual TIDAK PERNAH benar
+    // sebelum baris terakhir selesai -> header CUMA muncul SATU KALI
+    // walau expor tetap "berhasil" secara teknis (pdfkit auto-pagination
+    // sendiri tetap menambah halaman kalau perlu, TAPI TANPA header).
+    // `id=312` (blok pagination dikosongkan total) punya efek identik.
+    // `id=307/308` (kondisi dipaksa true/false) juga akan membuat angka
+    // ini salah drastis (false -> sama seperti di atas; true -> header
+    // muncul di SETIAP baris, jauh lebih dari 2).
+    expect(headerOccurrences).toBe(2);
+    expect(contentStreamCount).toBeGreaterThan(1);
+  });
+
+  it('T-mutation (id=317) — value null TIDAK PERNAH menghasilkan teks apa pun di kolomnya (bukan cuma "bukan string literal null", tapi BENAR-BENAR tidak ada operator gambar teks sama sekali)', async () => {
+    const rows: Row[] = [{ id: '1', name: 'Budi', note: null }];
+    const buffer = await toPdfBuffer(rows, columns, 'Judul');
+    const cells = extractPdfCells(buffer);
+
+    // pdfkit TIDAK menerbitkan operator Tj/TJ sama sekali untuk string
+    // kosong (dibuktikan terpisah) — jadi kolom "Catatan" baris ini
+    // SEHARUSNYA tidak muncul di daftar cell sama sekali. Mutant
+    // menggantinya dengan teks placeholder ("Stryker was here!")
+    // yang JELAS akan muncul sebagai cell sungguhan kalau lolos.
+    const PAGE_WIDTH = 841.89;
+    const MARGIN = 40;
+    const columnWidth = (PAGE_WIDTH - MARGIN - MARGIN) / columns.length;
+    const catatanColumnX = MARGIN + columnWidth * 2;
+
+    const cellAtCatatanColumn = cells.find(
+      (c) => Math.abs(c.x - catatanColumnX) < 1 && c.text !== 'Catatan'
+    );
+    expect(cellAtCatatanColumn).toBeUndefined();
+  });
+
+  it('T-mutation (id=297/id=320) — teks yang PANJANG di kolom TENGAH (bukan kolom terakhir — lihat catatan di bawah) BENAR-BENAR membungkus mengikuti lebar KOLOM, bukan melebar sampai ke tepi halaman', async () => {
+    // SENGAJA taruh teks panjang di kolom TENGAH ("name"), BUKAN kolom
+    // terakhir ("note") — dicoba dulu dengan kolom terakhir dan GAGAL
+    // mendiskriminasi: untuk kolom PALING KANAN, lebar SISA ke tepi
+    // halaman (default pdfkit kalau `width` dihapus) kebetulan HAMPIR
+    // SAMA PERSIS dengan columnWidth-nya sendiri (kebetulan angka —
+    // 3 kolom rata lebar pas mengisi halaman) — jadi mutan `{}` di
+    // kolom terakhir TIDAK BISA dibedakan dari aslinya. Kolom TENGAH
+    // tidak punya kebetulan itu: lebar sisa ke tepi halaman jauh lebih
+    // besar dari satu columnWidth.
+    const rows: Row[] = [
+      {
+        id: '1',
+        name: 'Nama yang sangat sangat sangat panjang sekali dan pasti tidak akan muat dalam satu baris kolom yang sempit ini sungguhan',
+        note: 'x',
+      },
+    ];
+    const buffer = await toPdfBuffer(rows, columns, 'Judul');
+    const cells = extractPdfCells(buffer);
+
+    const PAGE_WIDTH = 841.89;
+    const MARGIN = 40;
+    const columnWidth = (PAGE_WIDTH - MARGIN - MARGIN) / columns.length;
+    const namaColumnX = MARGIN + columnWidth * 1;
+
+    const namaCells = cells.filter((c) => Math.abs(c.x - namaColumnX) < 1 && c.text !== 'Nama');
+    const distinctYValues = new Set(namaCells.map((c) => Math.round(c.y)));
+
+    // Tanpa constraint `width` (options jadi `{}`), pdfkit menggambar
+    // teks itu melebar sampai lebar SISA halaman (jauh lebih dari satu
+    // columnWidth untuk kolom tengah) — dengan `width` yang benar,
+    // teks sepanjang ini WAJIB terbungkus ke lebih dari satu baris.
+    expect(distinctYValues.size).toBeGreaterThan(1);
+  });
+
+  it('T-mutation (id=297, jalur drawHeaderRow) — label HEADER kolom yang panjang juga membungkus mengikuti lebar kolom (bukan cuma sel data biasa)', async () => {
+    const longHeaderColumns: ExportColumn<Row>[] = [
+      { header: 'ID', value: (row) => row.id },
+      {
+        header: 'Nama Lengkap Kolom Ini Sengaja Dibuat Sangat Panjang Untuk Menguji Pembungkusan',
+        value: (row) => row.name,
+      },
+      { header: 'Catatan', value: (row) => row.note ?? '' },
+    ];
+    const rows: Row[] = [{ id: '1', name: 'Budi', note: 'x' }];
+
+    const buffer = await toPdfBuffer(rows, longHeaderColumns, 'Judul');
+    const cells = extractPdfCells(buffer);
+
+    const PAGE_WIDTH = 841.89;
+    const MARGIN = 40;
+    const columnWidth = (PAGE_WIDTH - MARGIN - MARGIN) / longHeaderColumns.length;
+    const namaColumnX = MARGIN + columnWidth * 1;
+
+    const headerCells = cells.filter((c) => Math.abs(c.x - namaColumnX) < 1 && c.text !== 'Budi');
+    const distinctYValues = new Set(headerCells.map((c) => Math.round(c.y)));
+
+    expect(distinctYValues.size).toBeGreaterThan(1);
+  });
+
+  it('T-mutation (id=287) — error stream internal PDFKit BENAR-BENAR membuat Promise dari toPdfBuffer reject (bukan diam-diam tergantung selamanya)', async () => {
+    const emitSpy = jest.spyOn((PDFDocument as any).prototype, 'on');
+
+    const promise = toPdfBuffer([{ id: '1', name: 'Budi', note: 'X' }], columns, 'Judul');
+
+    // Ambil handler yang benar-benar didaftarkan untuk event 'error'
+    // oleh toPdfBuffer, lalu panggil manual dengan error palsu — ini
+    // menguji WIRING-nya (apakah 'error' benar-benar didaftarkan,
+    // bukan string lain akibat mutant), bukan memaksa PDFKit sungguhan
+    // gagal secara internal.
+    const errorHandlerCall = emitSpy.mock.calls.find(([event]) => event === 'error');
+    expect(errorHandlerCall).toBeDefined();
+    const errorHandler = errorHandlerCall![1] as (err: Error) => void;
+
+    const fakeError = new Error('PDFKit internal error (disimulasikan)');
+    errorHandler(fakeError);
+
+    await expect(promise).rejects.toThrow('PDFKit internal error (disimulasikan)');
+    emitSpy.mockRestore();
   });
 });
