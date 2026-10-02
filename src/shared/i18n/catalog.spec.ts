@@ -42,6 +42,10 @@ const INTENTIONALLY_UNTRANSLATED_PREFIXES: ReadonlyArray<readonly [string, strin
     'MULTI/EXEC tidak mengembalikan',
     'error internal gateway (T18), langsung ditangkap fail-open, tidak sampai ke pengguna',
   ],
+  [
+    'quit() tidak selesai dalam',
+    'error internal shutdown (redis-shutdown.ts), hanya dicatat ke log lalu ditelan, tidak sampai ke pengguna',
+  ],
 ];
 
 /** File yang pesannya internal (log job, provider pihak ketiga, health, antrean) — tidak sampai ke pengguna API. */
