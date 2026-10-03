@@ -46,6 +46,10 @@ const INTENTIONALLY_UNTRANSLATED_PREFIXES: ReadonlyArray<readonly [string, strin
     'quit() tidak selesai dalam',
     'error internal shutdown (redis-shutdown.ts), hanya dicatat ke log lalu ditelan, tidak sampai ke pengguna',
   ],
+  [
+    'Redis tidak merespons dalam',
+    'error internal kolektor /metrics (queue.metrics.ts), hanya dicatat ke log lalu ditelan, tidak sampai ke pengguna',
+  ],
 ];
 
 /** File yang pesannya internal (log job, provider pihak ketiga, health, antrean) — tidak sampai ke pengguna API. */
