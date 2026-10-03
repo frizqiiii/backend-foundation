@@ -102,7 +102,10 @@ describe('toXlsxBuffer', () => {
  */
 function extractPdfText(buffer: Buffer): { text: string; contentStreamCount: number } {
   const raw = buffer.toString('latin1');
-  const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+  // PDFKit menulis `stream\n<data>\nendstream` — pemisah akhirnya HANYA `\n`. Jangan pakai `\r?\n`: byte
+  // TERAKHIR data deflate bisa kebetulan 0x0D, dan `\r?` akan memakannya sebagai bagian dari terminator
+  // sehingga stream terpotong 1 byte dan `inflateSync` gagal (±1-2% per PDF → test lulus-gagal acak).
+  const streamRegex = /stream\r?\n([\s\S]*?)\nendstream/g;
   let combined = '';
   let contentStreamCount = 0;
   let match: RegExpExecArray | null;
@@ -144,7 +147,10 @@ function extractPdfCells(
   buffer: Buffer
 ): Array<{ x: number; y: number; text: string; color: string | null }> {
   const raw = buffer.toString('latin1');
-  const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+  // PDFKit menulis `stream\n<data>\nendstream` — pemisah akhirnya HANYA `\n`. Jangan pakai `\r?\n`: byte
+  // TERAKHIR data deflate bisa kebetulan 0x0D, dan `\r?` akan memakannya sebagai bagian dari terminator
+  // sehingga stream terpotong 1 byte dan `inflateSync` gagal (±1-2% per PDF → test lulus-gagal acak).
+  const streamRegex = /stream\r?\n([\s\S]*?)\nendstream/g;
   const cells: Array<{ x: number; y: number; text: string; color: string | null }> = [];
   let match: RegExpExecArray | null;
   while ((match = streamRegex.exec(raw)) !== null) {
@@ -186,6 +192,43 @@ function extractPdfCells(
   }
   return cells;
 }
+
+describe('helper ekstraksi PDF (extractPdfText / extractPdfCells)', () => {
+  /**
+   * REGRESI DETERMINISTIK untuk test yang dulu lulus-gagal acak: byte TERAKHIR data deflate (low byte
+   * Adler-32) kebetulan 0x0D. Regex lama `\r?\nendstream` memakannya sebagai CR, stream terpotong 1 byte,
+   * `inflateSync` gagal, dan sel yang diekstrak jadi KOSONG. Di sini payload dicari sampai byte terakhir
+   * hasil deflate PASTI 0x0D, jadi kegagalannya tidak lagi bergantung pada keberuntungan.
+   */
+  function buildPdfLikeBufferEndingWithCr(): Buffer {
+    for (let padding = 0; padding < 5000; padding += 1) {
+      const content = `BT\n1 0 0 1 100 200 Tm\n<41> 0 Tj\nET\n% ${'a'.repeat(padding)}\n`;
+      const deflated = zlib.deflateSync(Buffer.from(content, 'latin1'));
+      if (deflated[deflated.length - 1] === 0x0d) {
+        return Buffer.concat([
+          Buffer.from('%PDF-1.3\n1 0 obj\n<< /Length 0 >>\nstream\n', 'latin1'),
+          deflated,
+          Buffer.from('\nendstream\nendobj\n%%EOF\n', 'latin1'),
+        ]);
+      }
+    }
+    throw new Error('tidak menemukan payload dengan byte deflate terakhir 0x0D');
+  }
+
+  it('extractPdfCells tetap membaca stream yang byte deflate terakhirnya 0x0D (bukan terpotong jadi 0 sel)', () => {
+    const cells = extractPdfCells(buildPdfLikeBufferEndingWithCr());
+
+    expect(cells).toHaveLength(1);
+    expect(cells[0]).toMatchObject({ x: 100, y: 200, text: 'A' });
+  });
+
+  it('extractPdfText tetap membaca stream yang byte deflate terakhirnya 0x0D', () => {
+    const { text, contentStreamCount } = extractPdfText(buildPdfLikeBufferEndingWithCr());
+
+    expect(contentStreamCount).toBe(1);
+    expect(text).toBe('A');
+  });
+});
 
 describe('toPdfBuffer', () => {
   it('menghasilkan buffer PDF valid (diawali magic bytes %PDF)', async () => {
