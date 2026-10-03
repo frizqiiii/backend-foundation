@@ -85,6 +85,20 @@ function buildRedisClient(): Redis | Cluster | null {
       // tidak siap; `retryStrategy` di bawah TETAP mengurus
       // reconnect di BACKGROUND (independen dari command mana pun).
       maxRetriesPerRequest: 0,
+      // `maxRetriesPerRequest: 0` SAJA TIDAK CUKUP untuk "gagal seketika": selama
+      // `enableOfflineQueue` tetap `true` (default ioredis), command yang datang saat koneksi
+      // belum `ready` TIDAK ditolak — ia diantre dan baru ditolak begitu percobaan reconnect
+      // BERIKUTNYA gagal. Diukur nyata (Redis mati, `docker stop`): SETIAP request yang melewati
+      // rate limiter membayar ~0,55-0,73 detik (0,005 detik saat Redis hidup), konstan dari +3
+      // sampai +30 detik; di probe Redis sungguhan di sandbox: 13-160ms (opsi lama) vs 0,3ms
+      // (`enableOfflineQueue: false`). Mode Cluster sudah memakai opsi ini sejak T21; single-instance
+      // belum. Aman untuk konsumen: SEMUA pemanggil `redisClient` sudah fail-open (cache,
+      // login-attempt-tracker, distributed-lock, API gateway) dan `RedisStore` milik rate-limit-redis
+      // memuat ulang script Lua-nya sendiri kalau SCRIPT LOAD/EVALSHA gagal (diuji nyata: hit-count
+      // tetap benar saat Redis mati ketika store dibuat, dan setelah Redis di-restart).
+      // Konsekuensinya: command yang datang SEBELUM koneksi pertama `ready` (beberapa milidetik
+      // setelah boot) juga ditolak → cache miss / rate-limit dilewati untuk jendela sesingkat itu.
+      enableOfflineQueue: false,
       // SEBELUMNYA `times > 2 ? null : ...` — mengembalikan `null`
       // artinya ioredis MENYERAH RECONNECT SELAMANYA setelah 2x
       // percobaan (bukan cuma per-request). Ini menyebabkan DUA

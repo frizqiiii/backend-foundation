@@ -22,7 +22,10 @@ describe('redis.ts — konfigurasi fail-fast (Chaos Engineering, item 2.7)', () 
       expect(
         (redisClient as { options: { maxRetriesPerRequest: number } }).options.maxRetriesPerRequest
       ).toBe(0);
-      await redisClient?.quit().catch(() => {});
+      // `disconnect()`, BUKAN `quit()`: dengan `enableOfflineQueue: false`, `quit()` pada koneksi yang belum
+      // pernah `ready` ditolak seketika dan TIDAK menutup apa pun — reconnect di background terus berjalan
+      // dan proses jest tidak pernah berhenti sendiri.
+      redisClient?.disconnect();
     });
   });
 
@@ -49,7 +52,48 @@ describe('redis.ts — konfigurasi fail-fast (Chaos Engineering, item 2.7)', () 
       // command yang kebetulan datang saat reconnect berlangsung).
       expect(delayAt1).toBeLessThanOrEqual(500);
 
-      await redisClient?.quit().catch(() => {});
+      // `disconnect()`, BUKAN `quit()`: dengan `enableOfflineQueue: false`, `quit()` pada koneksi yang belum
+      // pernah `ready` ditolak seketika dan TIDAK menutup apa pun — reconnect di background terus berjalan
+      // dan proses jest tidak pernah berhenti sendiri.
+      redisClient?.disconnect();
+    });
+  });
+
+  it('enableOfflineQueue: false — command saat koneksi tidak siap ditolak SEKETIKA (bukan diantre menunggu siklus reconnect, ~0,6 detik per request di mesin nyata)', async () => {
+    await jest.isolateModulesAsync(async () => {
+      process.env.REDIS_URL = 'redis://localhost:6379';
+      const { redisClient } = await import('./redis');
+      expect(
+        (redisClient as unknown as { options: { enableOfflineQueue: boolean } }).options
+          .enableOfflineQueue
+      ).toBe(false);
+      // `disconnect()`, BUKAN `quit()`: dengan `enableOfflineQueue: false`, `quit()` pada koneksi yang belum
+      // pernah `ready` ditolak seketika dan TIDAK menutup apa pun — reconnect di background terus berjalan
+      // dan proses jest tidak pernah berhenti sendiri.
+      redisClient?.disconnect();
+    });
+  });
+
+  it('REGRESI NYATA — ioredis sungguhan ke port tertutup: command ditolak oleh aturan offline queue, BUKAN oleh batas retry setelah menunggu reconnect', async () => {
+    await jest.isolateModulesAsync(async () => {
+      const net = await import('net');
+      const port = await new Promise<number>((resolve, reject) => {
+        const server = net.createServer();
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', () => {
+          const { port: freePort } = server.address() as import('net').AddressInfo;
+          server.close(() => resolve(freePort));
+        });
+      });
+      process.env.REDIS_URL = `redis://127.0.0.1:${port}`;
+      const { redisClient } = await import('./redis');
+
+      // Pesan error membedakan kedua perilaku secara DETERMINISTIK (tanpa ambang waktu yang rapuh):
+      // offline queue aktif  -> "Reached the max retries per request limit" (setelah menunggu reconnect);
+      // offline queue mati   -> "Stream isn't writeable and enableOfflineQueue options is false" (seketika).
+      await expect(redisClient?.get('k')).rejects.toThrow(/enableOfflineQueue/);
+
+      redisClient?.disconnect();
     });
   });
 });
