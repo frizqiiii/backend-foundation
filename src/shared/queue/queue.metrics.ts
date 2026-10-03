@@ -6,8 +6,31 @@ import { deadLetterQueue } from './dead-letter.queue';
 import { webhookDeliveryQueue } from './webhook-delivery.queue';
 import { exportQueue } from './export.queue';
 import { queueConnection } from './connection';
+import { isRedisConnectionDown } from './connection-status';
 import { logger } from '../logger';
 import type { Queue } from 'bullmq';
+
+/**
+ * Batas waktu satu pembacaan Redis oleh kolektor `/metrics`. Prometheus men-scrape tiap 15 detik dengan
+ * `scrape_timeout` bawaan 10 detik, jadi satu kolektor yang macet TIDAK boleh menahan respons sampai
+ * mendekati batas itu. 2 detik cukup longgar untuk Redis yang sehat tapi sibuk.
+ */
+export const METRICS_REDIS_TIMEOUT_MS = 2000;
+
+/** Jaring pengaman untuk koneksi yang tampak `ready` tapi macet: gagal dengan error setelah `ms`. */
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`Redis tidak merespons dalam ${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * Statistik kedalaman antrian (Phase 10 upgrade — "Queue Statistics").
@@ -29,6 +52,11 @@ export const queueJobsGauge = new Gauge({
   labelNames: ['queue', 'status'] as const,
   registers: [metricsRegistry],
   async collect() {
+    if (isRedisConnectionDown(queueConnection)) {
+      logger.debug('queueJobsGauge: koneksi Redis tidak siap, kolektor dilewati');
+      return;
+    }
+
     const queues: ReadonlyArray<[string, Queue | null]> = [
       ['email', emailQueue],
       ['notification', notificationQueue],
@@ -47,12 +75,9 @@ export const queueJobsGauge = new Gauge({
         }
 
         try {
-          const counts = await queue.getJobCounts(
-            'waiting',
-            'active',
-            'delayed',
-            'completed',
-            'failed'
+          const counts = await withTimeout(
+            queue.getJobCounts('waiting', 'active', 'delayed', 'completed', 'failed'),
+            METRICS_REDIS_TIMEOUT_MS
           );
           for (const [status, count] of Object.entries(counts)) {
             this.set({ queue: name, status }, count);
@@ -93,6 +118,10 @@ export const workerHealthGauge = new Gauge({
     if (!queueConnection) {
       return;
     }
+    if (isRedisConnectionDown(queueConnection)) {
+      logger.debug('workerHealthGauge: koneksi Redis tidak siap, kolektor dilewati');
+      return;
+    }
     // Ditangkap ke variabel lokal — TypeScript TIDAK menyempitkan
     // (narrow) binding `const` yang diimpor dari modul lain di dalam
     // closure async (`workerNames.map(async ...)` di bawah), walau
@@ -111,7 +140,10 @@ export const workerHealthGauge = new Gauge({
     await Promise.all(
       workerNames.map(async (name) => {
         try {
-          const lastHeartbeat = await connection.get(`worker:heartbeat:${name}`);
+          const lastHeartbeat = await withTimeout(
+            connection.get(`worker:heartbeat:${name}`),
+            METRICS_REDIS_TIMEOUT_MS
+          );
           const isAlive =
             lastHeartbeat !== null &&
             Date.now() - Number(lastHeartbeat) < WORKER_HEARTBEAT_STALE_MS;

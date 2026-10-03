@@ -1,5 +1,6 @@
 import { logger } from '../logger';
 import { queueConnection } from './connection';
+import { isRedisConnectionDown } from './connection-status';
 
 /**
  * Batas waktu `queue.add()` di jalur request. Cukup longgar untuk Redis sehat yang sibuk, dan jauh di
@@ -10,16 +11,6 @@ export const ENQUEUE_TIMEOUT_MS = 2000;
 
 interface AddableQueue<T> {
   add: (name: string, data: T) => Promise<unknown>;
-}
-
-/**
- * `true` hanya kalau KITA TAHU koneksi tidak siap (`status` ioredis bukan `ready`). `status` yang tidak
- * ada (mis. mock di test) dianggap "tidak diketahui" → tetap dicoba. (Logika yang sama dengan
- * `queue.metrics.ts`; sengaja belum dipusatkan agar PR ini tidak bersinggungan dengan perbaikan
- * `/metrics`. Gabungkan setelah keduanya ter-merge.)
- */
-function isRedisConnectionDown(connection: { status?: string } | null): boolean {
-  return connection !== null && connection.status !== undefined && connection.status !== 'ready';
 }
 
 /**

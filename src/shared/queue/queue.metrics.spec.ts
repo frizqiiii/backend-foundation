@@ -40,15 +40,21 @@ describe('observeQueueProcessingTime', () => {
 });
 
 describe('queueJobsGauge.collect()', () => {
-  async function loadWithQueues(queues: {
-    email?: unknown;
-    notification?: unknown;
-    deadLetter?: unknown;
-    webhookDelivery?: unknown;
-    export_?: unknown;
-  }) {
+  async function loadWithQueues(
+    queues: {
+      email?: unknown;
+      notification?: unknown;
+      deadLetter?: unknown;
+      webhookDelivery?: unknown;
+      export_?: unknown;
+    },
+    connection?: unknown
+  ) {
     let mod: typeof import('./queue.metrics') | undefined;
     await jest.isolateModulesAsync(async () => {
+      if (connection !== undefined) {
+        jest.doMock('./connection', () => ({ queueConnection: connection }));
+      }
       jest.doMock('./email.queue', () => ({ emailQueue: queues.email ?? null }));
       jest.doMock('./notification.queue', () => ({
         notificationQueue: queues.notification ?? null,
@@ -105,6 +111,48 @@ describe('queueJobsGauge.collect()', () => {
     await expect(queueJobsGauge.get()).resolves.toBeDefined();
     expect(workingGetJobCounts).toHaveBeenCalled();
   });
+
+  it('REDIS MATI (status bukan "ready") — kolektor DILEWATI: getJobCounts TIDAK dipanggil sama sekali (tidak ada perintah menumpuk di offline queue) dan scrape langsung selesai', async () => {
+    const getJobCounts = jest.fn(() => new Promise<never>(() => {})); // akan menggantung kalau dipanggil
+    const { queueJobsGauge } = await loadWithQueues(
+      { email: { getJobCounts } },
+      { status: 'reconnecting' }
+    );
+
+    await expect(queueJobsGauge.get()).resolves.toBeDefined();
+
+    expect(getJobCounts).not.toHaveBeenCalled();
+  });
+
+  it('koneksi "ready" tapi getJobCounts MENGGANTUNG — dianggap gagal setelah METRICS_REDIS_TIMEOUT_MS, queue lain tetap ter-scrape', async () => {
+    jest.useFakeTimers();
+    try {
+      const hanging = jest.fn(() => new Promise<never>(() => {}));
+      const working = jest
+        .fn()
+        .mockResolvedValue({ waiting: 4, active: 0, delayed: 0, completed: 0, failed: 0 });
+      const { queueJobsGauge, METRICS_REDIS_TIMEOUT_MS } = await loadWithQueues(
+        { email: { getJobCounts: hanging }, notification: { getJobCounts: working } },
+        { status: 'ready' }
+      );
+
+      const scrape = queueJobsGauge.get();
+      await jest.advanceTimersByTimeAsync(METRICS_REDIS_TIMEOUT_MS);
+      const metric = await scrape;
+
+      const notificationWaiting = metric.values.find(
+        (v) => v.labels.queue === 'notification' && v.labels.status === 'waiting'
+      );
+      expect(notificationWaiting?.value).toBe(4);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('timeout kolektor JAUH di bawah scrape_timeout Prometheus bawaan (10 detik)', async () => {
+    const { METRICS_REDIS_TIMEOUT_MS } = await loadWithQueues({});
+    expect(METRICS_REDIS_TIMEOUT_MS).toBeLessThanOrEqual(5000);
+  });
 });
 
 describe('workerHealthGauge.collect()', () => {
@@ -153,6 +201,34 @@ describe('workerHealthGauge.collect()', () => {
     const { workerHealthGauge } = await loadWithConnection({ get });
 
     await expect(workerHealthGauge.get()).resolves.toBeDefined();
+  });
+
+  it('REDIS MATI (status bukan "ready") — kolektor DILEWATI: get() TIDAK dipanggil sama sekali', async () => {
+    const get = jest.fn(() => new Promise<never>(() => {})); // akan menggantung kalau dipanggil
+    const { workerHealthGauge } = await loadWithConnection({ get, status: 'reconnecting' });
+
+    await expect(workerHealthGauge.get()).resolves.toBeDefined();
+
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it('koneksi "ready" tapi get() MENGGANTUNG — dianggap gagal setelah METRICS_REDIS_TIMEOUT_MS, scrape tetap selesai', async () => {
+    jest.useFakeTimers();
+    try {
+      const get = jest.fn(() => new Promise<never>(() => {}));
+      const { workerHealthGauge, METRICS_REDIS_TIMEOUT_MS } = await loadWithConnection({
+        get,
+        status: 'ready',
+      });
+
+      const scrape = workerHealthGauge.get();
+      await jest.advanceTimersByTimeAsync(METRICS_REDIS_TIMEOUT_MS);
+
+      await expect(scrape).resolves.toBeDefined();
+      expect(get).toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 
