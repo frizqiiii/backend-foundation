@@ -1,5 +1,6 @@
 import { Queue } from 'bullmq';
 import { queueConnection } from './connection';
+import { tryEnqueue } from './safe-enqueue';
 import { logger } from '../logger';
 import { bullMQTelemetry } from '../observability/bullmq-telemetry';
 
@@ -39,8 +40,7 @@ export const notificationQueue = queueConnection
  * di-drop kalau menumpuk, email verifikasi tidak boleh).
  */
 export async function enqueueNotificationJob(data: NotificationJobData): Promise<void> {
-  if (notificationQueue) {
-    await notificationQueue.add('notify', data);
+  if (await tryEnqueue(notificationQueue, 'notify', data)) {
     return;
   }
 

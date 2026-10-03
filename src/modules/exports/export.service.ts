@@ -10,6 +10,7 @@ import { toCsv, toXlsxBuffer, toPdfBuffer } from '../../shared/utils/export';
 import type { ExportColumn } from '../../shared/utils/export';
 import { objectStorageProvider } from '../../shared/integrations/storage';
 import { exportQueue, type ExportJobData } from '../../shared/queue/export.queue';
+import { tryEnqueue } from '../../shared/queue/safe-enqueue';
 import { logger } from '../../shared/logger';
 import { NotFoundError } from '../../shared/utils/http-error';
 
@@ -61,10 +62,8 @@ export class ExportService {
       tenantId: input.tenantId,
     };
 
-    if (exportQueue) {
-      await exportQueue.add('export', jobData);
-    } else {
-      // Redis tidak dikonfigurasi — proses LANGSUNG (blocking HTTP
+    if (!(await tryEnqueue(exportQueue, 'export', jobData))) {
+      // Redis tidak dikonfigurasi ATAU sedang tidak terjangkau (lihat `tryEnqueue`) — proses LANGSUNG (blocking HTTP
       // response sampai selesai). Diterima sebagai trade-off yang
       // SAMA dengan fitur queue lain di aplikasi ini — tanpa Redis,
       // "asynchronous" tidak benar-benar tersedia, tapi fitur inti

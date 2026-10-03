@@ -1,5 +1,6 @@
 import { Queue } from 'bullmq';
 import { queueConnection } from './connection';
+import { tryEnqueue } from './safe-enqueue';
 import { logger } from '../logger';
 import { signWebhookPayload } from '../integrations/webhook/webhook-signer';
 import { bullMQTelemetry } from '../observability/bullmq-telemetry';
@@ -63,8 +64,7 @@ export const webhookDeliveryQueue = queueConnection
  * benar).
  */
 export async function enqueueWebhookDelivery(data: WebhookDeliveryJobData): Promise<void> {
-  if (webhookDeliveryQueue) {
-    await webhookDeliveryQueue.add(data.eventType, data);
+  if (await tryEnqueue(webhookDeliveryQueue, data.eventType, data)) {
     return;
   }
 
