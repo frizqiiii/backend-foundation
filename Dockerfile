@@ -21,8 +21,19 @@ COPY package.json package-lock.json .npmrc ./
 # tidak ada di sini. HUSKY=0 saja TIDAK cukup: kalau husky-nya sendiri
 # tidak terinstal (lihat stage prod-deps di bawah), script `prepare`
 # akan mencoba menjalankan binary yang tidak ada sama sekali.
+#
+# `npm rebuild bcrypt` (HANYA bcrypt) WAJIB setelah `npm ci --ignore-scripts`:
+# binding native bcrypt (`bcrypt_lib.node`) dibuat oleh install script-nya
+# sendiri, yang ikut dilewati --ignore-scripts. Tanpa langkah ini image
+# TIDAK PUNYA binding dan `require('bcrypt')` gagal ("Cannot find module
+# .../bcrypt_lib.node") — dibuktikan dengan `docker build` + `docker run`
+# di mesin development. python3/make/g++ (build-deps) ada persis untuk
+# langkah ini kalau tidak ada binary prebuilt untuk musl/Alpine, jadi
+# `apk del` HARUS sesudahnya. `npm rebuild <paket>` hanya menjalankan script
+# paket itu (bukan `prepare` husky milik proyek).
 RUN apk add --no-cache --virtual .build-deps python3 make g++ \
   && npm ci --ignore-scripts \
+  && npm rebuild bcrypt \
   && apk del .build-deps
 
 # ============================================================================
@@ -46,8 +57,14 @@ COPY package.json package-lock.json .npmrc ./
 # --ignore-scripts: sama seperti stage `deps` — di sini bahkan lebih wajib,
 # karena husky (devDependency) sengaja TIDAK terinstal via --omit=dev,
 # jadi script `prepare` pasti gagal ("husky: not found") kalau tidak dilewati.
+#
+# `npm rebuild bcrypt`: lihat penjelasan di stage `deps`. Di sini PALING
+# penting — stage inilah yang node_modules-nya disalin ke image `runner`
+# (yang sengaja tidak punya npm/compiler lagi), jadi binding harus sudah
+# jadi di stage ini sebelum build-deps dihapus.
 RUN apk add --no-cache --virtual .build-deps python3 make g++ \
   && npm ci --omit=dev --ignore-scripts \
+  && npm rebuild bcrypt \
   && apk del .build-deps
 
 # ============================================================================

@@ -165,6 +165,17 @@ jobs:
           load: ${{ github.event_name != 'push' }}
           tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
 
+      # Smoke test RUNTIME image (bukan sekadar build + scan): memuat modul native yang
+      # dibutuhkan aplikasi. `npm ci --ignore-scripts` di Dockerfile pernah menghasilkan
+      # image TANPA binding bcrypt (`bcrypt_lib.node`) yang lolos build, Trivy, SBOM, dan
+      # signing, tapi crash saat start — tidak ada yang MENJALANKAN image-nya. Hanya PR:
+      # pada push, image sudah di-push ke registry dan tidak dimuat ke daemon runner.
+      - name: Smoke test image (modul native bisa dimuat)
+        if: github.event_name != 'push'
+        run: |
+          docker run --rm --entrypoint node ghcr.io/${{ github.repository }}:${{ github.sha }} \
+            -e "require('bcrypt').hashSync('smoke', 4); console.log('bcrypt OK')"
+
       # Referensi image untuk scan & SBOM. Push: dari registry, by digest
       # (persis seperti sebelumnya). PR: image lokal di daemon runner.
       - name: Tentukan referensi image
