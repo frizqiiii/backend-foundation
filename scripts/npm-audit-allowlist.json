@@ -14,6 +14,13 @@
     "reason": "@opentelemetry/propagator-jaeger hanya terpasang sebagai dependency transitive bawaan @opentelemetry/sdk-node (opsi propagator yang TERSEDIA, bukan yang AKTIF). Sudah dicek langsung ke kode: tidak ada 'propagator' ataupun 'OTEL_PROPAGATORS' di seluruh src/ maupun docs/ -- tracing.ts tidak pernah mengisi textMapPropagator, jadi NodeSDK memakai default bawaan (W3C tracecontext + baggage), BUKAN JaegerPropagator. Kelas yang rentan (metode extract() yang mem-parsing header uber-trace-id) tidak pernah diinstansiasi ataupun dipanggil di aplikasi ini. Fix ini terikat pada bump semver-major yang sama seperti GHSA-q7rr-3cgh-j5r3 di atas (lihat alasan lengkap di entri itu).",
     "reviewBy": "2027-02-01",
     "addedAt": "2026-08-07"
+  },
+  {
+    "id": "GHSA-vfj7-8cjw-p6xm",
+    "package": "braces",
+    "title": "braces vulnerable to stack-exhaustion denial of service through deeply nested patterns",
+    "reason": "braces@3.0.3 HANYA terpasang sebagai dependency DEVELOPMENT transitive (lint-staged -> micromatch -> braces, dan ts-node-dev -> chokidar@3 -> braces); `npm ls braces --omit=dev` kosong dan Dockerfile stage prod-deps memakai `npm ci --omit=dev`, jadi paket ini TIDAK ada di image production maupun kode aplikasi (tidak ada import braces/micromatch di src/, prisma/, scripts/). Kerentanannya (rekursi tak terbatas pada pola brace bersarang sangat dalam) hanya bisa dipicu kalau penyerang dapat menyuplai PATTERN glob ke braces; di sini pola hanya berasal dari konfigurasi repo (lint-staged di package.json) dan argumen watch ts-node-dev yang ditulis developer, bukan input pengguna. Fix upstream TIDAK ADA: rentang rentan `<=3.0.3` mencakup SEMUA versi braces yang dipublikasikan (latest = 3.0.3). Satu-satunya jalur yang disarankan `npm audit` (lint-staged 17.6.0, semver-major) tidak cukup dan merusak: ia mensyaratkan Node >=22.22.1 sedangkan CI dan Docker memakai Node 20, dan jalur ts-node-dev -> chokidar@3 -> braces tetap ada (ts-node-dev 2.0.0 adalah rilis terbaru). Tinjau ulang kalau braces merilis versi perbaikan, atau CI/Docker pindah ke Node >=22.22.1 sehingga lint-staged 17 (picomatch) dan pengganti ts-node-dev bisa dipakai.",
+    "reviewBy": "2027-04-01",
+    "addedAt": "2026-10-03"
   }
 ]
-
