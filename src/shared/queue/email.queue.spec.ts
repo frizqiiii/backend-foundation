@@ -79,5 +79,30 @@ describe('email.queue', () => {
         expect(mailerMod.mailer.send).not.toHaveBeenCalled();
       });
     });
+
+    it('REDIS MATI (queue ada tapi koneksi tidak siap) — fallback SINKRON dipakai dan add() TIDAK dipanggil, supaya register/reset password tidak menggantung', async () => {
+      await jest.isolateModulesAsync(async () => {
+        jest.doMock('./connection', () => ({ queueConnection: { status: 'reconnecting' } }));
+
+        // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/consistent-type-imports
+        const mailerMod = require('../utils/mailer') as typeof import('../utils/mailer');
+        // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/consistent-type-imports
+        const mod = require('./email.queue') as typeof import('./email.queue');
+        (mailerMod.mailer.send as jest.Mock).mockClear();
+
+        expect(mod.emailQueue).not.toBeNull();
+
+        await mod.enqueueEmailJob({
+          type: 'verification',
+          to: 'budi@example.com',
+          token: 'abc123',
+        });
+
+        expect(mod.emailQueue?.add).not.toHaveBeenCalled();
+        expect(mailerMod.mailer.send).toHaveBeenCalledWith(
+          expect.objectContaining({ to: 'budi@example.com' })
+        );
+      });
+    });
   });
 });

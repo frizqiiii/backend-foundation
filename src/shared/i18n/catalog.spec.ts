@@ -54,6 +54,7 @@ const INTERNAL_FILE_FRAGMENTS = [
   '/integrations/',
   'webhook-delivery.queue.ts',
   'health.controller.ts',
+  'safe-enqueue.ts',
 ];
 
 /**

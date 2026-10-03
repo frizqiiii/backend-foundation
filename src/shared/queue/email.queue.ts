@@ -1,5 +1,6 @@
 import { Queue } from 'bullmq';
 import { queueConnection } from './connection';
+import { tryEnqueue } from './safe-enqueue';
 import { mailer } from '../utils/mailer';
 import { bullMQTelemetry } from '../observability/bullmq-telemetry';
 
@@ -59,12 +60,11 @@ export const emailQueue = queueConnection
  * langsung direspons.
  */
 export async function enqueueEmailJob(data: EmailJobData): Promise<void> {
-  if (emailQueue) {
-    await emailQueue.add(data.type, data);
+  if (await tryEnqueue(emailQueue, data.type, data)) {
     return;
   }
 
-  // Redis tidak dikonfigurasi — jalankan langsung secara sinkron,
+  // Redis tidak dikonfigurasi ATAU sedang tidak terjangkau (lihat `tryEnqueue`) — jalankan langsung secara sinkron,
   // konsisten dengan pola graceful-degradation di seluruh aplikasi
   // (cache, OAuth, dsb): fitur tambahan tidak boleh membuat fungsi
   // inti (mengirim email verifikasi/reset) gagal total.
