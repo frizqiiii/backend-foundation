@@ -93,9 +93,12 @@ Dua file compose dengan tujuan berbeda:
   docker compose -f docker-compose.prod.yml ps
   ```
 
-  `DB_PASSWORD` wajib di-set di `.env` — compose ini akan menolak start
-  tanpa itu (`${DB_PASSWORD:?...}`), mencegah deployment production
-  dengan password default yang lupa diganti.
+  `DB_PASSWORD` dan `DB_ADMIN_PASSWORD` wajib di-set di `.env` — compose ini
+  akan menolak start tanpa keduanya (`${...:?...}`), mencegah deployment
+  production dengan password default yang lupa diganti. `DB_ADMIN_PASSWORD`
+  adalah superuser PostgreSQL (hanya administrasi); aplikasi memakai `DB_USER`
+  yang dibuat non-superuser agar Row-Level Security benar-benar berlaku.
+  Lihat [docs/postgres-roles.md](docs/postgres-roles.md).
 
 ## Deployment ke VPS (bare-metal, bukan Docker)
 

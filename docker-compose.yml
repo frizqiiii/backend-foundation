@@ -20,19 +20,29 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: app_user
-      POSTGRES_PASSWORD: app_password
+      # `POSTGRES_USER` = superuser bootstrap (mem-bypass RLS, dan TIDAK bisa diturunkan).
+      # Aplikasi TIDAK boleh memakainya: role aplikasi dibuat TERPISAH (non-superuser,
+      # NOBYPASSRLS) oleh deploy/postgres/01-app-role.sh saat inisialisasi pertama.
+      # Volume lama (dibuat sebelum perubahan ini) tidak ikut berubah: `docker compose down -v`.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_admin_dev
       POSTGRES_DB: app_db
+      APP_DB_USER: app_user
+      APP_DB_PASSWORD: app_password
     ports:
       - '5432:5432'
     volumes:
       # Data persist di named volume — data tidak hilang saat container
       # di-recreate (`docker compose down` tanpa flag -v).
       - postgres_data:/var/lib/postgresql/data
+      - ./deploy/postgres/01-app-role.sh:/docker-entrypoint-initdb.d/01-app-role.sh:ro
     networks:
       - backend-network
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U app_user -d app_db']
+      # `-h 127.0.0.1` (TCP): selama inisialisasi, entrypoint menjalankan server SEMENTARA yang
+      # hanya mendengarkan socket unix. Tanpa `-h`, healthcheck bisa lolos sebelum skrip init
+      # selesai dan service lain start terlalu dini.
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U app_user -d app_db']
       interval: 5s
       timeout: 5s
       retries: 5
