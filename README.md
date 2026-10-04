@@ -75,7 +75,8 @@ Dua file compose dengan tujuan berbeda:
   ```bash
   docker compose up --build
   # aplikasi: http://localhost:3000
-  # Postgres juga bisa diakses langsung: localhost:5432
+  # Postgres juga bisa diakses langsung dari host: localhost:5432 (hanya 127.0.0.1;
+  # ubah lewat POSTGRES_HOST_PORT / REDIS_HOST_PORT / APP_HOST_PORT di .env)
   ```
 
 - **`docker-compose.prod.yml`** — simulasi/deployment production:

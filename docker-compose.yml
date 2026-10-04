@@ -29,8 +29,13 @@ services:
       POSTGRES_DB: app_db
       APP_DB_USER: app_user
       APP_DB_PASSWORD: app_password
+    # Hanya `127.0.0.1`: sebelumnya `'5432:5432'` memublikasikan database (kredensial dev
+    # `app_user`/`app_password`) ke SEMUA interface host. Docker menambahkan aturan iptables
+    # sendiri untuk port yang dipublikasikan, yang melewati aturan firewall `INPUT` host
+    # (ufw/nftables) — firewall host yang ketat belum tentu melindungi port ini. Port host bisa
+    # diganti lewat `POSTGRES_HOST_PORT` di `.env` bila 5432 sudah dipakai (mis. PostgreSQL native).
     ports:
-      - '5432:5432'
+      - '127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432'
     volumes:
       # Data persist di named volume — data tidak hilang saat container
       # di-recreate (`docker compose down` tanpa flag -v).
@@ -50,8 +55,10 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # Hanya `127.0.0.1` (Redis dev TANPA password) — lihat catatan di `postgres_db`.
+    # Ganti port host lewat `REDIS_HOST_PORT` di `.env` bila 6379 sudah dipakai.
     ports:
-      - '6379:6379'
+      - '127.0.0.1:${REDIS_HOST_PORT:-6379}:6379'
     volumes:
       # Persist cache antar-restart container — opsional secara
       # semantik (cache boleh hilang kapan saja tanpa merusak
@@ -76,8 +83,10 @@ services:
       target: deps
     command: sh -c "npx prisma generate && npm run dev"
     restart: unless-stopped
+    # Hanya `127.0.0.1` (compose DEV) — lihat catatan di `postgres_db`. Ganti port host lewat
+    # `APP_HOST_PORT` di `.env`. Untuk produksi, `docker-compose.prod.yml` mengatur sendiri.
     ports:
-      - '3000:3000'
+      - '127.0.0.1:${APP_HOST_PORT:-3000}:3000'
     env_file:
       - .env
     environment:
