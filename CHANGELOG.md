@@ -40,6 +40,21 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
 - **Workflow `mutation.yml`**: mutation testing penuh mingguan, terpisah dari CI utama
   dan tidak memblokir PR (item 3.5).
 - `CODEOWNERS` (item 3.2) dan berkas `CHANGELOG.md` ini (item 3.4).
+- **Endpoint suspend/reaktivasi tenant** `PATCH /api/v1/tenants/:id/status` (`ACTIVE`/`SUSPENDED`, temuan T3),
+  tercatat di audit log dan membersihkan cache. Temuan penting: jalur autentikasi API key **tidak pernah mengecek
+  status tenant** (hanya `tenantMiddleware` lewat header `X-Tenant-ID`, yang tidak pernah dikirim jalur API key),
+  jadi tenant yang di-suspend tetap bisa dipakai partner lewat API key. Kini dicek sedini mungkin dan **fail-closed**
+  — `docs/tenant-status-suspension.md`.
+- **Override kuota rate limit per API key** `PATCH /api/v1/api-keys/:id/rate-limit-override` (temuan T4, permission
+  baru `api-key.manage`), kolom `ApiKey.rateLimitOverridePerMinute` — migration
+  `20260923000000_api_key_rate_limit_override`.
+- **Smoke test runtime image di CI** (hanya `pull_request`): langkah `docker-build-and-scan` kini menjalankan image
+  hasil build dan memuat modul native `bcrypt`. Sebelumnya build, scan Trivy, SBOM, dan signing semuanya lolos untuk
+  image yang tidak bisa dijalankan.
+- **Role aplikasi PostgreSQL terpisah dari superuser** untuk stack Compose: `deploy/postgres/01-app-role.sh`,
+  variabel `DB_ADMIN_PASSWORD` (wajib di `docker-compose.prod.yml`), dan `docs/postgres-roles.md` (termasuk jalur
+  migrasi untuk volume yang sudah ada).
+- Variabel `POSTGRES_HOST_PORT`, `REDIS_HOST_PORT`, `APP_HOST_PORT` untuk `docker-compose.yml` (dev).
 
 ### Diubah
 - Kuota per-tenant dan per-API-key tidak lagi satu angka flat: sekarang bergantung plan
@@ -48,10 +63,32 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
 - `createRateLimiter` menerima `max` berupa fungsi per-request dan opsi
   `skipSuccessfulRequests`/`requestWasSuccessful`.
 - `ApiKeyService.authenticate` kini juga mengembalikan `tenantId`.
-- Skor mutation testing dinaikkan menjadi 91,35% pada run penuh terakhir
-  (`export.ts` mendapat test posisi kolom dan warna PDF).
+- Skor mutation testing dinaikkan menjadi **≈96,86%** pada run penuh terakhir (431 mutant, 13 survivor). Seluruh
+  37 survivor dari run sebelumnya ditriase satu per satu dengan bukti nyata dan dicatat di
+  `docs/mutation-survivors.md` (bug nyata diperbaiki dengan mutasi manual sebagai bukti; equivalent mutant dibuktikan
+  empiris; sisanya didokumentasikan). Angka dihitung dari `mutation.json`: terdeteksi (killed + timeout) dibagi mutan valid.
+- **Runtime naik dari Node 20 ke Node 24**: `Dockerfile` (`node:24-alpine`), `ci.yml`, `mutation.yml`, dan panduan
+  VPS. Node 20 sudah melewati akhir masa dukungan (30 April 2026). Terverifikasi: image build di Alpine, binding
+  `bcrypt`, dan server production start dengan database dan Redis; peringatan AWS SDK soal versi Node hilang.
+- `package.json` memuat `allowScripts: {"bcrypt@5.1.1": true}` agar npm ≥ 12 (yang memblokir install script secara
+  bawaan) tetap membangun binding native `bcrypt`.
+- **`docker-compose.prod.yml` kini menolak start tanpa `DB_ADMIN_PASSWORD`** (superuser PostgreSQL, terpisah dari
+  `DB_PASSWORD` milik role aplikasi). Deployment yang sudah ada perlu menambahkannya di `.env`.
 
 ### Keamanan
+- **RLS kini benar-benar berlaku di stack Docker Compose**: `POSTGRES_USER=app_user` menjadikan aplikasi **superuser
+  bootstrap** yang mem-bypass Row-Level Security walaupun `FORCE ROW LEVEL SECURITY` (diukur: `select count(*) from
+  products` = 3 untuk superuser vs 0 untuk role biasa pada data yang sama). Berlaku untuk `docker-compose.yml` dan
+  `docker-compose.prod.yml`. Kini role aplikasi dibuat terpisah (`NOSUPERUSER NOBYPASSRLS`); 28 migration terbukti
+  bisa diterapkan tanpa hak superuser. Role bootstrap tidak bisa diturunkan, jadi volume yang sudah ada butuh
+  dump/restore — `docs/postgres-roles.md`.
+- **Port database, Redis, dan aplikasi di `docker-compose.yml` (dev) tidak lagi terbuka ke semua interface**: `'5432:5432'`
+  memublikasikan ke `0.0.0.0`; kini `127.0.0.1` (terukur: lewat IP LAN ditolak). Docker menambah aturan iptables sendiri
+  yang biasanya melewati firewall host.
+- **Advisory dependency**: `@grpc/grpc-js` dan `brace-expansion` (HIGH) diperbaiki lewat update lockfile;
+  `GHSA-vfj7-8cjw-p6xm` (`braces`, HIGH) **tidak punya versi perbaikan** (semua versi terdampak) dan hanya dependency
+  development, jadi diterima di `scripts/npm-audit-allowlist.json` dengan justifikasi teknis dan tinjau ulang paling
+  lambat 2027-04-01.
 - **`aquasecurity/trivy-action` di-pin ke SHA commit penuh** (temuan T10), bukan `@master`: ref yang bisa
   berubah pada scanner keamanan adalah risiko rantai pasok (insiden 2026-03-19, tag action di-force-push ke
   malware). Lihat `docs/sbom-and-signing.md`.
@@ -60,6 +97,35 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   `.github/dependabot.yml` (ekosistem `github-actions`) menjaga pin tetap diperbarui lewat PR.
 
 ### Diperbaiki
+- **Image Docker tidak punya binding `bcrypt` dan tidak bisa menjalankan modul auth**: `npm ci --ignore-scripts` melewati
+  install script bcrypt, dan tidak ada `npm rebuild`. Terbukti di `docker build` + `docker run` (`bcrypt_lib.node` tidak
+  ada). Kini `npm rebuild bcrypt` di stage `deps` dan `prod-deps`; diverifikasi di Alpine.
+- **Aplikasi tetap jalan saat Redis mati — kini terbukti dan diukur** (seri temuan runtime di laptop development):
+  - `/ready` butuh ≈3,0 detik saat Redis mati, sama dengan `readinessProbe.timeoutSeconds: 3` Helm, sehingga probe
+    bisa gagal karena dependency yang didokumentasikan opsional. Kini timeout dependency opsional 1000 ms (≈1,0 detik).
+  - Shutdown menggantung 10 detik lalu keluar dengan kode 1 setelah satu request ke `/ready` atau `/metrics`
+    (`QUIT` mengantre di belakang perintah yang tidak pernah selesai). Kini `quit()` dibatasi 2 detik lalu koneksi
+    diputus paksa; `exit=0`.
+  - `POST /auth/register` menggantung (timeout 8 detik tanpa respons) padahal user sudah tersimpan (percobaan ulang
+    mendapat 409). Berlaku juga untuk reset password, kirim ulang verifikasi, notifikasi, webhook, dan export. Kini
+    `tryEnqueue` memakai fallback sinkron yang sama dengan "Redis tidak dikonfigurasi".
+  - Klien Redis cache membuat setiap request lewat rate limiter menunggu ≈0,59 detik (antrean offline menunggu
+    siklus reconnect); kini ≈0,015 detik (`enableOfflineQueue: false`).
+  - `/metrics` menggantung (metrik HTTP ikut hilang tepat saat alert dibutuhkan); kini 200 dalam ≈7 ms.
+  Akar masalah yang sama: koneksi BullMQ memakai `maxRetriesPerRequest: null`, jadi perintah ke Redis yang mati
+  tidak pernah gagal.
+- **`prisma/seed.ts` gagal di database ber-RLS** (`42501` pada `products`, ditolak `FORCE ROW LEVEL SECURITY`) dan
+  akun seed tidak bisa login (403 "Email belum diverifikasi"). Kini upsert produk/event berjalan dengan
+  `app.bypass_rls` dan akun seed ditandai terverifikasi (juga pada `update`, agar database yang sudah ter-seed ikut
+  terperbaiki).
+- **Test PDF `export.spec.ts` gagal acak (≈4% per PDF)**: regex ekstraksi stream memakan byte deflate terakhir
+  bernilai `0x0D` (terukur: 123 dari 3000 PDF vs 0). Ditambah test deterministik yang memaksa kasus itu.
+- **Redis Cluster kini fail-fast** (temuan T21): command setelah seluruh node mati tidak pernah selesai (>15 detik),
+  lebih buruk dari bug single-instance. Kini ditolak <1 ms dan pulih otomatis (≈258 ms) — `docs/chaos-engineering.md`.
+- **Deploy blue-green kini memakai dua direktori terpisah** (temuan T20): blue dan green berbagi satu `cwd`, sehingga
+  worker blue yang restart otomatis (`max_memory_restart`) menjalankan kode green yang belum lolos health check
+  (dibuktikan dengan cluster PM2 sungguhan). Kini `BLUE_APP_DIR`/`GREEN_APP_DIR` wajib dan terpisah, fail-closed —
+  `docs/blue-green-deployment.md`.
 - **Skrip Disaster Recovery kini benar di bawah Row-Level Security** (temuan T19): `backup-db.sh` gagal dengan role aplikasi
   dan jalan pintas `--enable-row-security` menghasilkan backup KOSONG yang dinyatakan valid oleh `verify-backup.sh`;
   `verify-backup.sh` bisa menimpa production lewat URL beda ejaan (5 baris data hilang dalam uji); file backup berizin
