@@ -32,17 +32,25 @@ services:
     image: postgres:16-alpine
     restart: always
     environment:
-      POSTGRES_USER: ${DB_USER:-app_user}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD wajib diisi di .env production}
+      # `POSTGRES_USER` = superuser bootstrap (mem-bypass RLS, dan TIDAK bisa diturunkan).
+      # Aplikasi TIDAK boleh memakainya: role aplikasi (DB_USER/DB_PASSWORD) dibuat TERPISAH,
+      # non-superuser dan NOBYPASSRLS, oleh deploy/postgres/01-app-role.sh saat inisialisasi
+      # pertama. Volume yang SUDAH ada tidak ikut berubah — lihat docs/postgres-roles.md.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_ADMIN_PASSWORD:?DB_ADMIN_PASSWORD wajib diisi di .env production}
       POSTGRES_DB: ${DB_NAME:-app_db}
+      APP_DB_USER: ${DB_USER:-app_user}
+      APP_DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD wajib diisi di .env production}
     # TIDAK ADA `ports:` di sini — sengaja. Database hanya bisa diakses
     # dari service lain di `backend-network`, tidak dari luar host.
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./deploy/postgres/01-app-role.sh:/docker-entrypoint-initdb.d/01-app-role.sh:ro
     networks:
       - backend-network
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${DB_USER:-app_user} -d ${DB_NAME:-app_db}']
+      # `-h 127.0.0.1` (TCP): lihat catatan di docker-compose.yml (server sementara saat init).
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U ${DB_USER:-app_user} -d ${DB_NAME:-app_db}']
       interval: 10s
       timeout: 5s
       retries: 5
