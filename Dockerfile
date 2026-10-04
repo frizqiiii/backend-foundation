@@ -3,7 +3,7 @@
 # ============================================================================
 # STAGE 0: base — image dasar bersama, dipakai ulang oleh stage lain
 # ============================================================================
-FROM node:20-alpine AS base
+FROM node:24-alpine AS base
 WORKDIR /app
 # openssl & libc6-compat dibutuhkan oleh Prisma query engine di Alpine (musl).
 RUN apk add --no-cache openssl libc6-compat
@@ -73,12 +73,12 @@ RUN apk add --no-cache --virtual .build-deps python3 make g++ \
 # hasil generate, dan schema Prisma. Tidak ada source TypeScript maupun
 # devDependencies sama sekali.
 # ============================================================================
-FROM node:20-alpine AS runner
+FROM node:24-alpine AS runner
 WORKDIR /app
 RUN apk add --no-cache openssl libc6-compat
 
 # Image ini HANYA menjalankan `node dist/server.js`, tidak pernah
-# memanggil npm/yarn/corepack — hapus bawaan base image node:20-alpine
+# memanggil npm/yarn/corepack — hapus bawaan base image node:24-alpine
 # supaya tidak ikut masuk hasil scan Trivy sebagai attack surface (dan
 # memang benar tidak dibutuhkan runtime). Ini menghilangkan sumber
 # mayoritas temuan Trivy sebelumnya (termasuk 1 CRITICAL di `tar`),

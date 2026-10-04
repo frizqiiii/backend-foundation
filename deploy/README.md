@@ -12,8 +12,8 @@
 ```bash
 sudo apt update && sudo apt upgrade -y
 
-# Node.js 20.x
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+# Node.js 24.x (Node 20 sudah melewati end-of-life 30 April 2026)
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt install -y nodejs
 
 # PostgreSQL
