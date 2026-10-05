@@ -12,7 +12,13 @@ describe('cacheKeys', () => {
 
   it('eventsListPattern / eventsList', () => {
     expect(cacheKeys.eventsListPattern()).toBe('cache:events:list:*');
-    expect(cacheKeys.eventsList('category=Musik')).toBe('cache:events:list:category=Musik');
+    expect(cacheKeys.eventsList('tenant-1', 'category=Musik')).toBe(
+      'cache:events:list:tenant-1:category=Musik'
+    );
+    // S2: tenant berbeda + query sama HARUS menghasilkan kunci berbeda.
+    expect(cacheKeys.eventsList('tenant-1', 'q')).not.toBe(cacheKeys.eventsList('tenant-2', 'q'));
+    // ...dan tetap tercakup oleh pola invalidasi wildcard.
+    expect(cacheKeys.eventsList('tenant-1', 'q').startsWith('cache:events:list:')).toBe(true);
   });
 
   it('featureFlag', () => {
