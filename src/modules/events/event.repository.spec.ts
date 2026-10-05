@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import { EventRepository, type CreateEventData } from './event.repository';
 import { runWithTenantContext } from '../../shared/tenant/tenant-context';
 import type { ListEventsQueryDto } from './event.dto';
@@ -182,5 +182,120 @@ describe('EventRepository', () => {
       data: { deletedAt: expect.any(Date) },
     });
     expect(result).toBe(deleted);
+  });
+
+  // R16 (RLS) — saat tenant context aktif, `tenantMiddleware` menyediakan transaction client (`tx`) yang sudah
+  // membawa `app.tenant_id`. SEMUA method harus memakai `tx` itu; memakai `this.prisma` membuat query berjalan
+  // di koneksi lain TANPA `app.tenant_id` sehingga ditolak/disembunyikan FORCE RLS (create -> 42501, list -> kosong).
+  describe('DENGAN transaction client tenant (RLS): memakai tx, BUKAN this.prisma', () => {
+    function createMockTx() {
+      return {
+        event: {
+          create: jest.fn(),
+          findMany: jest.fn(),
+          count: jest.fn(),
+          findFirst: jest.fn(),
+          update: jest.fn(),
+        },
+      };
+    }
+
+    function withTx<T>(tx: ReturnType<typeof createMockTx>, fn: () => T): T {
+      return runWithTenantContext(
+        {
+          tenantId: 'tenant-1',
+          tenantSlug: 'acme',
+          db: tx as unknown as Prisma.TransactionClient,
+        },
+        fn
+      );
+    }
+
+    function expectPrismaUntouched(prisma: PrismaClient) {
+      expect(prisma.event.create).not.toHaveBeenCalled();
+      expect(prisma.event.findMany).not.toHaveBeenCalled();
+      expect(prisma.event.count).not.toHaveBeenCalled();
+      expect(prisma.event.findFirst).not.toHaveBeenCalled();
+      expect(prisma.event.update).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    }
+
+    it('create: lewat tx dengan tenantId dari context', async () => {
+      const prisma = createMockPrisma();
+      const tx = createMockTx();
+      tx.event.create.mockResolvedValue({ id: 'e1' });
+
+      await withTx(tx, () => new EventRepository(prisma).create(baseEventData));
+
+      expect(tx.event.create).toHaveBeenCalledWith({
+        data: { ...baseEventData, tenantId: 'tenant-1' },
+      });
+      expectPrismaUntouched(prisma);
+    });
+
+    it('findMany: findMany + count berurutan lewat tx (tx tidak punya $transaction), hasil sama', async () => {
+      const prisma = createMockPrisma();
+      const tx = createMockTx();
+      const rows = [{ id: 'e1' }];
+      tx.event.findMany.mockResolvedValue(rows);
+      tx.event.count.mockResolvedValue(1);
+
+      const result = await withTx(tx, () =>
+        new EventRepository(prisma).findMany({ page: 2, limit: 5 } as ListEventsQueryDto)
+      );
+
+      expect(tx.event.findMany).toHaveBeenCalledWith({
+        where: { deletedAt: null, tenantId: 'tenant-1' },
+        skip: 5,
+        take: 5,
+        orderBy: { date: 'asc' },
+      });
+      expect(tx.event.count).toHaveBeenCalledWith({
+        where: { deletedAt: null, tenantId: 'tenant-1' },
+      });
+      expect(result).toEqual({ data: rows, total: 1 });
+      expectPrismaUntouched(prisma);
+    });
+
+    it('findById: lewat tx, tetap memfilter tenantId', async () => {
+      const prisma = createMockPrisma();
+      const tx = createMockTx();
+      tx.event.findFirst.mockResolvedValue(null);
+
+      await withTx(tx, () => new EventRepository(prisma).findById('e1'));
+
+      expect(tx.event.findFirst).toHaveBeenCalledWith({
+        where: { id: 'e1', deletedAt: null, tenantId: 'tenant-1' },
+      });
+      expectPrismaUntouched(prisma);
+    });
+
+    it('update: lewat tx', async () => {
+      const prisma = createMockPrisma();
+      const tx = createMockTx();
+      tx.event.update.mockResolvedValue({ id: 'e1' });
+
+      await withTx(tx, () => new EventRepository(prisma).update('e1', { title: 'Baru' }));
+
+      expect(tx.event.update).toHaveBeenCalledWith({
+        where: { id: 'e1' },
+        data: { title: 'Baru' },
+      });
+      expectPrismaUntouched(prisma);
+    });
+
+    it('delete (soft delete): lewat tx', async () => {
+      const prisma = createMockPrisma();
+      const tx = createMockTx();
+      tx.event.update.mockResolvedValue({ id: 'e1' });
+
+      await withTx(tx, () => new EventRepository(prisma).delete('e1'));
+
+      expect(tx.event.update).toHaveBeenCalledWith({
+        where: { id: 'e1' },
+        data: { deletedAt: expect.any(Date) },
+      });
+      expectPrismaUntouched(prisma);
+    });
   });
 });
