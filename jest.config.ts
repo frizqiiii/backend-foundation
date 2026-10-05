@@ -26,6 +26,8 @@ const config: Config = {
     'rls-bypass\\.e2e\\.spec\\.ts$',
     // Temuan T15 — erasure di bawah RLS, juga butuh database SUNGGUHAN (`npm run test:rls`).
     'privacy-erasure-rls\\.e2e\\.spec\\.ts$',
+    // R16 — EventRepository di bawah RLS, juga butuh database SUNGGUHAN (`npm run test:rls`).
+    'event-rls\\.e2e\\.spec\\.ts$',
   ],
   setupFiles: ['<rootDir>/jest.setup.ts'],
   clearMocks: true,

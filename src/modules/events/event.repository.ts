@@ -1,6 +1,6 @@
 import type { PrismaClient, Event, Prisma } from '@prisma/client';
 import { pagination } from '../../shared/pagination';
-import { getTenantContext } from '../../shared/tenant/tenant-context';
+import { getScopedPrisma, getTenantContext } from '../../shared/tenant/tenant-context';
 import type { ListEventsQueryDto } from './event.dto';
 
 export interface CreateEventData {
@@ -28,7 +28,7 @@ export class EventRepository {
    */
   async create(data: CreateEventData): Promise<Event> {
     const { tenantId } = getTenantContext();
-    return this.prisma.event.create({ data: { ...data, tenantId } });
+    return getScopedPrisma(this.prisma).event.create({ data: { ...data, tenantId } });
   }
 
   /**
@@ -46,15 +46,27 @@ export class EventRepository {
   async findMany(query: ListEventsQueryDto): Promise<{ data: Event[]; total: number }> {
     const where = this.buildWhereClause(query);
 
-    const [data, total] = await this.prisma.$transaction([
-      this.prisma.event.findMany({
-        where,
-        ...pagination(query.page, query.limit),
-        orderBy: { date: 'asc' },
-      }),
-      this.prisma.event.count({ where }),
-    ]);
+    const client = getScopedPrisma(this.prisma);
+    const findManyArgs = {
+      where,
+      ...pagination(query.page, query.limit),
+      orderBy: { date: 'asc' as const },
+    };
 
+    // R16 (RLS) — dua jalur, sama seperti `ProductRepository.applyUpgrade`: `Prisma.TransactionClient`
+    // (dikembalikan `getScopedPrisma` saat tenant context aktif) TIDAK punya `$transaction`, jadi
+    // `findMany` + `count` dijalankan berurutan di transaksi request yang sudah membawa `app.tenant_id`.
+    // Tanpa tenant context, tetap batch `$transaction([...])` agar keduanya konsisten.
+    if (client === this.prisma) {
+      const [data, total] = await this.prisma.$transaction([
+        this.prisma.event.findMany(findManyArgs),
+        this.prisma.event.count({ where }),
+      ]);
+      return { data, total };
+    }
+
+    const data = await client.event.findMany(findManyArgs);
+    const total = await client.event.count({ where });
     return { data, total };
   }
 
@@ -97,11 +109,11 @@ export class EventRepository {
     if (tenantId) {
       where.tenantId = tenantId;
     }
-    return this.prisma.event.findFirst({ where });
+    return getScopedPrisma(this.prisma).event.findFirst({ where });
   }
 
   async update(id: string, data: UpdateEventData): Promise<Event> {
-    return this.prisma.event.update({ where: { id }, data });
+    return getScopedPrisma(this.prisma).event.update({ where: { id }, data });
   }
 
   /**
@@ -111,7 +123,10 @@ export class EventRepository {
    * alasannya (menjaga integritas rujukan dari AuditLog & data lain).
    */
   async delete(id: string): Promise<Event> {
-    return this.prisma.event.update({ where: { id }, data: { deletedAt: new Date() } });
+    return getScopedPrisma(this.prisma).event.update({
+      where: { id },
+      data: { deletedAt: new Date() },
+    });
   }
 
   private buildWhereClause(query: ListEventsQueryDto): Prisma.EventWhereInput {
