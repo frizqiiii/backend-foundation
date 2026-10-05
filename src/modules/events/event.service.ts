@@ -11,6 +11,7 @@ import { hasPermission } from '../../shared/security/permissions';
 import { buildPaginatedResult, type PaginatedResult } from '../../shared/pagination';
 import { getOrSetCache, invalidateByPattern } from '../../shared/utils/cache';
 import { cacheKeys } from '../../shared/utils/cache-keys';
+import { getTenantContext } from '../../shared/tenant/tenant-context';
 import { enqueueNotificationJob } from '../../shared/queue/notification.queue';
 
 const EVENTS_LIST_CACHE_TTL_SECONDS = 60;
@@ -46,19 +47,28 @@ export class EventService {
    * variasi sekaligus), bukan menghapus satu key spesifik.
    */
   async listEvents(query: ListEventsQueryDto): Promise<PaginatedResult<EventResponseDto>> {
+    const fetchPage = async () => {
+      const { data, total } = await this.eventRepository.findMany(query);
+      return buildPaginatedResult(
+        data.map((event) => this.toResponseDto(event)),
+        total,
+        query.page,
+        query.limit
+      );
+    };
+
+    // S2 (isolasi tenant): tanpa konteks tenant TIDAK ada cache — kunci tanpa tenant akan dipakai bersama oleh
+    // semua tenant. Dengan tenant, kunci memuat `tenantId` sehingga tiap tenant punya entri sendiri.
+    const { tenantId } = getTenantContext();
+    if (!tenantId) {
+      return fetchPage();
+    }
+
     const queryKey = JSON.stringify(query, Object.keys(query).sort());
     return getOrSetCache(
-      cacheKeys.eventsList(queryKey),
+      cacheKeys.eventsList(tenantId, queryKey),
       EVENTS_LIST_CACHE_TTL_SECONDS,
-      async () => {
-        const { data, total } = await this.eventRepository.findMany(query);
-        return buildPaginatedResult(
-          data.map((event) => this.toResponseDto(event)),
-          total,
-          query.page,
-          query.limit
-        );
-      }
+      fetchPage
     );
   }
 

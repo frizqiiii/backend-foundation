@@ -24,7 +24,13 @@ export const cacheKeys = {
    * `invalidateByPattern` saat ada event yang dibuat/diubah/dihapus.
    */
   eventsListPattern: (): string => 'cache:events:list:*',
-  eventsList: (queryKey: string): string => `cache:events:list:${queryKey}`,
+  /**
+   * S2 (isolasi tenant) — kunci WAJIB memuat `tenantId`. Sebelumnya hanya `queryKey`, sehingga hasil list tenant A
+   * disajikan ke tenant B (atau request tanpa tenant) yang query-nya sama selama TTL. Pola invalidasi
+   * (`eventsListPattern`) tetap wildcard `cache:events:list:*`, jadi tetap menghapus semua tenant sekaligus.
+   */
+  eventsList: (tenantId: string, queryKey: string): string =>
+    `cache:events:list:${tenantId}:${queryKey}`,
   /** Phase 16 upgrade — lihat `FeatureFlagService.isEnabled`. */
   featureFlag: (key: string): string => `cache:feature-flag:${key}`,
   /**
