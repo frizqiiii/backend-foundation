@@ -1,4 +1,5 @@
 import type { PrismaClient, ApiKey } from '@prisma/client';
+import { getScopedPrisma, withRlsBypass } from '../../shared/tenant/tenant-context';
 
 export class ApiKeyRepository {
   constructor(private readonly prisma: PrismaClient) {}
@@ -12,7 +13,7 @@ export class ApiKeyRepository {
     scopes: string[];
     expiresAt: Date | null;
   }): Promise<ApiKey> {
-    return this.prisma.apiKey.create({ data });
+    return getScopedPrisma(this.prisma).apiKey.create({ data });
   }
 
   /**
@@ -25,15 +26,21 @@ export class ApiKeyRepository {
    * dibedakan, bukan disamakan jadi satu "tidak ditemukan" generik.
    */
   async findByHash(keyHash: string): Promise<ApiKey | null> {
-    return this.prisma.apiKey.findUnique({ where: { keyHash } });
+    // R17 (RLS) — autentikasi API key terjadi SEBELUM tenant diketahui (tenant justru ada di baris key ini),
+    // jadi lookup-nya sengaja memakai bypass RLS. Aman: dicari lewat SHA-256 dari key lengkap (entropi tinggi,
+    // bukan tebakan) dan hanya SATU baris dibaca; tenant pemiliknya divalidasi aktif sesudahnya oleh pemanggil.
+    return withRlsBypass(this.prisma, (tx) => tx.apiKey.findUnique({ where: { keyHash } }));
   }
 
   async findManyForUser(userId: string): Promise<ApiKey[]> {
-    return this.prisma.apiKey.findMany({ where: { userId }, orderBy: { createdAt: 'desc' } });
+    return getScopedPrisma(this.prisma).apiKey.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
   }
 
   async findByIdForUser(id: string, userId: string): Promise<ApiKey | null> {
-    return this.prisma.apiKey.findFirst({ where: { id, userId } });
+    return getScopedPrisma(this.prisma).apiKey.findFirst({ where: { id, userId } });
   }
 
   /**
@@ -43,7 +50,7 @@ export class ApiKeyRepository {
    * key milik user MANA PUN.
    */
   async findById(id: string): Promise<ApiKey | null> {
-    return this.prisma.apiKey.findUnique({ where: { id } });
+    return getScopedPrisma(this.prisma).apiKey.findUnique({ where: { id } });
   }
 
   /**
@@ -52,17 +59,23 @@ export class ApiKeyRepository {
    * kolom lain di model ini yang nullable karena BELUM diisi.
    */
   async updateRateLimitOverride(id: string, value: number | null): Promise<ApiKey> {
-    return this.prisma.apiKey.update({
+    return getScopedPrisma(this.prisma).apiKey.update({
       where: { id },
       data: { rateLimitOverridePerMinute: value },
     });
   }
 
   async revoke(id: string): Promise<ApiKey> {
-    return this.prisma.apiKey.update({ where: { id }, data: { revokedAt: new Date() } });
+    return getScopedPrisma(this.prisma).apiKey.update({
+      where: { id },
+      data: { revokedAt: new Date() },
+    });
   }
 
   async touchLastUsed(id: string): Promise<void> {
-    await this.prisma.apiKey.update({ where: { id }, data: { lastUsedAt: new Date() } });
+    // R17 (RLS) — dipanggil dari jalur autentikasi API key (tanpa tenant context), jadi sama seperti `findByHash`.
+    await withRlsBypass(this.prisma, (tx) =>
+      tx.apiKey.update({ where: { id }, data: { lastUsedAt: new Date() } })
+    );
   }
 }

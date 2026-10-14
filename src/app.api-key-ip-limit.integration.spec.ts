@@ -85,6 +85,12 @@ function buildApp(): Application {
             }
           : null
       )) as never);
+    // R17: `findByHash`/`touchLastUsed` kini lewat `withRlsBypass` -> `prisma.$transaction(cb)` +
+    // `$executeRaw(set_config bypass)`. Mock dalam mengembalikan undefined untuk `$transaction`,
+    // jadi jalankan callback-nya dengan klien palsu yang sama agar lookup key tetap terjangkau.
+    prismaMock.$transaction.mockImplementation(((cb: (tx: unknown) => unknown) =>
+      cb(prismaMock)) as never);
+    prismaMock.$executeRaw.mockResolvedValue(0 as never);
     prismaMock.apiKey.update.mockResolvedValue({} as never);
     prismaMock.apiKey.findMany.mockResolvedValue([]);
     prismaMock.user.findFirst.mockResolvedValue({

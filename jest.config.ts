@@ -28,6 +28,8 @@ const config: Config = {
     'privacy-erasure-rls\\.e2e\\.spec\\.ts$',
     // R16 — EventRepository di bawah RLS, juga butuh database SUNGGUHAN (`npm run test:rls`).
     'event-rls\\.e2e\\.spec\\.ts$',
+    // R17 — ApiKeyRepository di bawah RLS, juga butuh database SUNGGUHAN (`npm run test:rls`).
+    'api-key-rls\\.e2e\\.spec\\.ts$',
     // R18 — WebhookRepository di bawah RLS, juga butuh database SUNGGUHAN (`npm run test:rls`).
     'webhook-rls\\.e2e\\.spec\\.ts$',
   ],
@@ -38,6 +40,10 @@ const config: Config = {
     '!src/server.ts',
     '!src/worker.ts',
     '!src/**/*.d.ts',
+    // File spec adalah TES, bukan kode produksi. Spec yang dikecualikan dari run normal lewat
+    // `testPathIgnorePatterns` (e2e RLS yang butuh DB sungguhan, contract spec) tidak dijalankan di
+    // sini, sehingga Jest menghitungnya sebagai kode sumber ber-cakupan 0% dan menurunkan metrik global.
+    '!src/**/*.spec.ts',
     '!src/**/*.routes.ts',
     '!src/shared/config/**',
   ],
