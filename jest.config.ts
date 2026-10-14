@@ -38,6 +38,10 @@ const config: Config = {
     '!src/server.ts',
     '!src/worker.ts',
     '!src/**/*.d.ts',
+    // File spec adalah TES, bukan kode produksi. Spec yang dikecualikan dari run normal lewat
+    // `testPathIgnorePatterns` (e2e RLS yang butuh DB sungguhan, contract spec) tidak dijalankan di
+    // sini, sehingga Jest menghitungnya sebagai kode sumber ber-cakupan 0% dan menurunkan metrik global.
+    '!src/**/*.spec.ts',
     '!src/**/*.routes.ts',
     '!src/shared/config/**',
   ],
