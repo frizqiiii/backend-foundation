@@ -197,6 +197,9 @@ export const EN_MESSAGES: Readonly<Record<string, string>> = {
   'Override kuota harus lebih dari 0': 'Rate limit override must be greater than 0',
   'Tenant pemilik API key ini tidak ditemukan atau sedang tidak aktif':
     'The tenant that owns this API key was not found or is currently inactive',
+  'Anda tidak memiliki akses ke tenant yang diminta':
+    'You do not have access to the requested tenant',
+  'Pengguna tidak ditemukan': 'User not found',
   'Tenant berhasil dibuat': 'Tenant created successfully',
   'Slug hanya boleh huruf kecil, angka, dan tanda hubung':
     'Slug may only contain lowercase letters, numbers, and hyphens',

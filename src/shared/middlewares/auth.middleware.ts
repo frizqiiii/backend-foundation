@@ -10,6 +10,8 @@ import { ApiKeyService } from '../../modules/api-keys/api-key.service';
 import { enforcePartnerApiGatewayLimit } from '../security/api-key-gateway';
 import { resolveTenantPlanSafe } from '../tenant/tenant-plan';
 import { isTenantActiveForApiKey } from '../tenant/tenant-status';
+import { getTenantContext } from '../tenant/tenant-context';
+import { assertTenantBinding } from '../tenant/tenant-binding';
 import { API_KEY_JTI_PREFIX } from '../security/api-key-auth';
 
 // Instance module-level — sama pola & alasan seperti
@@ -100,6 +102,23 @@ export async function authMiddleware(
       throw new UnauthorizedError('Token sudah dicabut (revoked). Silakan login ulang.');
     }
 
+    // S1 — tenant dari header HARUS milik user ini. `tenantMiddleware` (global) jalan SEBELUM identitas diketahui,
+    // jadi pengikatan baru bisa ditegakkan di sini. Query user hanya terjadi kalau header tenant dikirim (request
+    // tanpa header tidak menambah query apa pun), dan membaca `tenantId` TERKINI dari database, bukan klaim token
+    // yang bisa basi.
+    const requestedTenantId = getTenantContext().tenantId;
+    if (requestedTenantId != null) {
+      const owner = await userRepository.findById(payload.id);
+      if (!owner) {
+        throw new UnauthorizedError('Pengguna tidak ditemukan');
+      }
+      assertTenantBinding({
+        requestedTenantId,
+        boundTenantId: owner.tenantId,
+        role: payload.role,
+      });
+    }
+
     req.user = {
       id: payload.id,
       email: payload.email,
@@ -162,6 +181,14 @@ async function authenticateWithApiKey(req: Request, rawKey: string): Promise<voi
     // di docs/security-guide.md), jadi tetap ditolak eksplisit di sini.
     throw new NotFoundError('Pemilik API key ini tidak ditemukan');
   }
+
+  // S1 — tenant header harus cocok dengan tenant yang mengikat key ini (`ApiKey.tenantId`); key tanpa tenant memakai
+  // tenant pemilik. Tanpa ini, key tenant A bisa memilih tenant B lewat `X-Tenant-ID`.
+  assertTenantBinding({
+    requestedTenantId: getTenantContext().tenantId,
+    boundTenantId: tenantId ?? user.tenantId,
+    role: user.role as never,
+  });
 
   req.user = {
     id: user.id,
