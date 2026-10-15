@@ -30,6 +30,8 @@ const config: Config = {
     'event-rls\\.e2e\\.spec\\.ts$',
     // R17 — ApiKeyRepository di bawah RLS, juga butuh database SUNGGUHAN (`npm run test:rls`).
     'api-key-rls\\.e2e\\.spec\\.ts$',
+    // R19 — ExportRepository di bawah RLS, juga butuh database SUNGGUHAN (`npm run test:rls`).
+    'export-rls\\.e2e\\.spec\\.ts$',
   ],
   setupFiles: ['<rootDir>/jest.setup.ts'],
   clearMocks: true,

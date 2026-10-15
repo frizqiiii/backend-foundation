@@ -15,6 +15,7 @@ const config: Config = {
     '**/privacy-erasure-rls.e2e.spec.ts',
     '**/event-rls.e2e.spec.ts',
     '**/api-key-rls.e2e.spec.ts',
+    '**/export-rls.e2e.spec.ts',
   ],
   testPathIgnorePatterns: ['/node_modules/'],
   setupFiles: ['<rootDir>/jest.setup.rls-e2e.ts'],

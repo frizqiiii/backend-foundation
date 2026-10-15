@@ -154,3 +154,57 @@ export async function withRlsBypass<T>(
     return fn(tx);
   });
 }
+
+/**
+ * R19 — Menjalankan `fn` di transaksi tenant MANDIRI: transaksi baru milik `client` (koneksi sendiri), dengan
+ * `app.tenant_id` ter-set, yang LANGSUNG ter-commit begitu `fn` selesai. Di dalam `fn`, `getScopedPrisma()` mengembalikan
+ * transaction client ini.
+ *
+ * Kapan dipakai (alih-alih ikut transaksi request lewat `getScopedPrisma`): hanya untuk kebutuhan yang HARUS terlihat
+ * oleh proses LAIN sebelum request selesai. Contoh nyata: baris `ExportJob` dibuat lalu job-nya di-enqueue ke BullMQ.
+ * `tenantMiddleware` baru meng-commit transaksi request SETELAH response selesai, padahal worker (proses terpisah) bisa
+ * mengambil job itu dalam hitungan milidetik. Tanpa commit mandiri, `markProcessing` di worker tidak menemukan barisnya.
+ * Konsekuensinya baris ikut tersimpan walau request kemudian gagal; untuk job yang SUDAH di-enqueue itu memang benar.
+ *
+ * `tenantId` null -> `fn` dijalankan apa adanya di konteks yang sedang aktif (tanpa transaksi baru). Untuk tabel
+ * ber-RLS hasilnya fail-closed (INSERT ditolak, baca kosong), bukan membuka akses lintas tenant.
+ *
+ * Trade-off: memakai SATU koneksi tambahan dari pool selama `fn` berjalan. Pakai hanya untuk operasi database singkat.
+ */
+export async function runInTenantTransaction<T>(
+  client: PrismaClient,
+  tenantId: string | null,
+  fn: () => Promise<T>
+): Promise<T> {
+  if (tenantId == null) {
+    return fn();
+  }
+  return client.$transaction(
+    async (tx: Prisma.TransactionClient) => {
+      await tx.$executeRaw`SELECT set_config('app.tenant_id', ${tenantId}, true)`;
+      return runWithTenantContext({ tenantId, tenantSlug: null, db: tx }, fn);
+    },
+    { maxWait: 10_000, timeout: 30_000 }
+  );
+}
+
+/**
+ * R19 — Memastikan `fn` berjalan dengan `app.tenant_id` ter-set, di dua situasi berbeda:
+ *  - Ada transaksi tenant AKTIF (alur request lewat `tenantMiddleware`): dipakai apa adanya, tanpa transaksi baru.
+ *    Operasi ikut atomic dengan request dan jalur fallback sinkron tetap konsisten.
+ *  - TIDAK ada (alur worker BullMQ/scheduler, yang tidak lewat middleware): membuka transaksi mikro mandiri untuk
+ *    `tenantId` dari data job (`runInTenantTransaction`) yang ter-commit per panggilan.
+ *
+ * Transaksi mikro per langkah (BUKAN satu transaksi untuk seluruh job) disengaja: status seperti `FAILED` harus tetap
+ * tersimpan walau job kemudian melempar ulang error untuk retry BullMQ. Satu transaksi besar akan ikut rollback.
+ */
+export async function withTenantScope<T>(
+  client: PrismaClient,
+  tenantId: string | null,
+  fn: () => Promise<T>
+): Promise<T> {
+  if (getTenantContext().db) {
+    return fn();
+  }
+  return runInTenantTransaction(client, tenantId, fn);
+}

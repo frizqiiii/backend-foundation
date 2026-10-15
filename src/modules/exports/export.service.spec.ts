@@ -180,9 +180,10 @@ describe('ExportService', () => {
         format: 'CSV',
       });
 
-      expect(exportRepository.markProcessing).toHaveBeenCalledWith('exp-1');
+      expect(exportRepository.markProcessing).toHaveBeenCalledWith('exp-1', null);
       expect(exportRepository.markCompleted).toHaveBeenCalledWith(
         'exp-1',
+        null,
         'https://storage.example.com/exports/file.csv'
       );
     });
@@ -211,7 +212,7 @@ describe('ExportService', () => {
         tenantId: null,
       });
 
-      expect(exportRepository.markProcessing).toHaveBeenCalledWith('exp-1');
+      expect(exportRepository.markProcessing).toHaveBeenCalledWith('exp-1', null);
       expect(mockStorage.upload).toHaveBeenCalledWith(
         expect.objectContaining({ contentType: 'text/csv' })
       );
@@ -219,8 +220,31 @@ describe('ExportService', () => {
       expect(uploadedBody.toString('utf-8')).toContain('budi@example.com');
       expect(exportRepository.markCompleted).toHaveBeenCalledWith(
         'exp-1',
+        null,
         'https://storage.example.com/exports/file.csv'
       );
+    });
+
+    it('R19: tenantId dari data job diteruskan ke markProcessing, markCompleted, dan markFailed (worker tanpa konteks tenant)', async () => {
+      const job = {
+        exportJobId: 'exp-1',
+        type: 'USERS' as const,
+        format: 'CSV' as const,
+        userId: 'user-1',
+        tenantId: 'tenant-1',
+      };
+
+      await service.processExportJob(job);
+      expect(exportRepository.markProcessing).toHaveBeenCalledWith('exp-1', 'tenant-1');
+      expect(exportRepository.markCompleted).toHaveBeenCalledWith(
+        'exp-1',
+        'tenant-1',
+        'https://storage.example.com/exports/file.csv'
+      );
+
+      mockStorage.upload.mockRejectedValueOnce(new Error('S3 down'));
+      await expect(service.processExportJob(job)).rejects.toThrow('S3 down');
+      expect(exportRepository.markFailed).toHaveBeenCalledWith('exp-1', 'tenant-1', 'S3 down');
     });
 
     it('markFailed dan melempar ulang error kalau storage upload gagal', async () => {
@@ -236,7 +260,7 @@ describe('ExportService', () => {
         })
       ).rejects.toThrow('S3 down');
 
-      expect(exportRepository.markFailed).toHaveBeenCalledWith('exp-1', 'S3 down');
+      expect(exportRepository.markFailed).toHaveBeenCalledWith('exp-1', null, 'S3 down');
     });
 
     it('generate XLSX untuk tipe DASHBOARD_STATS, meratakan signupsLast30Days jadi baris per hari', async () => {
@@ -341,6 +365,7 @@ describe('ExportService', () => {
 
       expect(exportRepository.markFailed).toHaveBeenCalledWith(
         'exp-1',
+        null,
         expect.stringContaining('reportingService belum di-wire')
       );
     });
