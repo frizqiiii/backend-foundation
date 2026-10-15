@@ -90,7 +90,7 @@ export class ExportService {
    * business logic) di komentar `export.queue.ts`.
    */
   async processExportJob(data: ExportJobData): Promise<void> {
-    await this.exportRepository.markProcessing(data.exportJobId);
+    await this.exportRepository.markProcessing(data.exportJobId, data.tenantId);
 
     try {
       const { buffer, contentType, extension } = await this.generateFile(data);
@@ -102,7 +102,7 @@ export class ExportService {
         contentType,
       });
 
-      await this.exportRepository.markCompleted(data.exportJobId, url);
+      await this.exportRepository.markCompleted(data.exportJobId, data.tenantId, url);
     } catch (error) {
       logger.error(
         { err: error, exportJobId: data.exportJobId, type: data.type, format: data.format },
@@ -110,6 +110,7 @@ export class ExportService {
       );
       await this.exportRepository.markFailed(
         data.exportJobId,
+        data.tenantId,
         error instanceof Error ? error.message : 'Gagal memproses export'
       );
       // Tetap dilempar ULANG — kalau diproses lewat BullMQ, ini yang
