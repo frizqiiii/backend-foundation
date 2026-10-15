@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { UnauthorizedError, NotFoundError, ForbiddenError } from '../utils/http-error';
+import { runWithTenantContext } from '../tenant/tenant-context';
 
 const jwtVerifyMock = jest.fn();
 const isBlacklistedMock = jest.fn();
@@ -43,6 +44,150 @@ describe('authMiddleware', () => {
     enforceGatewayMock.mockResolvedValue(undefined);
     resolveTenantPlanSafeMock.mockResolvedValue(null);
     isTenantActiveForApiKeyMock.mockResolvedValue(true);
+  });
+
+  describe('S1 — tenant dari header terikat ke identitas', () => {
+    const jwtPayload = (role: string) => ({
+      id: 'user-1',
+      email: 'budi@example.com',
+      role,
+      jti: 'jti-1',
+      exp: 9999999999,
+    });
+
+    function inTenant<T>(tenantId: string | null, fn: () => Promise<T>): Promise<T> {
+      return runWithTenantContext({ tenantId, tenantSlug: null, db: null }, fn);
+    }
+
+    async function runJwt(
+      requested: string | null,
+      role = 'USER'
+    ): Promise<{ next: jest.Mock; req: Request }> {
+      jwtVerifyMock.mockReturnValue(jwtPayload(role));
+      const req = createMockReq('Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature');
+      const next = jest.fn();
+      await inTenant(requested, () => authMiddleware(req, {} as Response, next as NextFunction));
+      return { next, req };
+    }
+
+    it('JWT: tanpa header tenant -> TIDAK ada query user tambahan (tidak mengubah perilaku lama)', async () => {
+      const { next } = await runJwt(null);
+      expect(next).toHaveBeenCalledWith();
+      expect(findByIdMock).not.toHaveBeenCalled();
+    });
+
+    it('JWT: header = tenant milik user -> lolos dan req.user terisi', async () => {
+      findByIdMock.mockResolvedValue({ id: 'user-1', tenantId: 'tenant-a' });
+      const { next, req } = await runJwt('tenant-a');
+      expect(next).toHaveBeenCalledWith();
+      expect(req.user?.id).toBe('user-1');
+    });
+
+    it('JWT: header = tenant LAIN -> ForbiddenError dan req.user TIDAK terisi', async () => {
+      findByIdMock.mockResolvedValue({ id: 'user-1', tenantId: 'tenant-a' });
+      const { next, req } = await runJwt('tenant-b');
+      expect(next).toHaveBeenCalledWith(expect.any(ForbiddenError));
+      expect(req.user).toBeUndefined();
+    });
+
+    it('JWT: ADMIN yang punya tenant tetap terikat ke tenantnya', async () => {
+      findByIdMock.mockResolvedValue({ id: 'user-1', tenantId: 'tenant-a' });
+      const { next } = await runJwt('tenant-b', 'ADMIN');
+      expect(next).toHaveBeenCalledWith(expect.any(ForbiddenError));
+    });
+
+    it('JWT: ADMIN tanpa tenant (platform) boleh memilih tenant mana pun', async () => {
+      findByIdMock.mockResolvedValue({ id: 'user-1', tenantId: null });
+      const { next } = await runJwt('tenant-b', 'ADMIN');
+      expect(next).toHaveBeenCalledWith();
+    });
+
+    it('JWT: USER tanpa tenant + header tenant -> ForbiddenError (fail-closed)', async () => {
+      findByIdMock.mockResolvedValue({ id: 'user-1', tenantId: null });
+      const { next } = await runJwt('tenant-b', 'USER');
+      expect(next).toHaveBeenCalledWith(expect.any(ForbiddenError));
+    });
+
+    it('JWT: user sudah tidak ada/terhapus + header tenant -> UnauthorizedError', async () => {
+      findByIdMock.mockResolvedValue(null);
+      const { next } = await runJwt('tenant-a');
+      expect(next).toHaveBeenCalledWith(expect.any(UnauthorizedError));
+    });
+
+    function apiKeyAuth(keyTenantId: string | null): void {
+      apiKeyAuthenticateMock.mockResolvedValue({
+        apiKeyId: 'key-1',
+        userId: 'user-1',
+        tenantId: keyTenantId,
+        scopes: [],
+        expiresAt: null,
+      });
+    }
+
+    async function runKey(requested: string | null): Promise<jest.Mock> {
+      const next = jest.fn();
+      await inTenant(requested, () =>
+        authMiddleware(createMockReq('Bearer bfk_abc123'), {} as Response, next as NextFunction)
+      );
+      return next;
+    }
+
+    it('API key: header = tenant key -> lolos', async () => {
+      apiKeyAuth('tenant-a');
+      findByIdMock.mockResolvedValue({
+        id: 'user-1',
+        email: 'b@e.com',
+        role: 'USER',
+        tenantId: 'tenant-a',
+      });
+      expect(await runKey('tenant-a')).toHaveBeenCalledWith();
+    });
+
+    it('API key: header = tenant LAIN -> ForbiddenError', async () => {
+      apiKeyAuth('tenant-a');
+      findByIdMock.mockResolvedValue({
+        id: 'user-1',
+        email: 'b@e.com',
+        role: 'USER',
+        tenantId: 'tenant-a',
+      });
+      expect(await runKey('tenant-b')).toHaveBeenCalledWith(expect.any(ForbiddenError));
+    });
+
+    it('API key tanpa tenant memakai tenant pemilik sebagai pengikat', async () => {
+      apiKeyAuth(null);
+      findByIdMock.mockResolvedValue({
+        id: 'user-1',
+        email: 'b@e.com',
+        role: 'USER',
+        tenantId: 'tenant-a',
+      });
+      expect(await runKey('tenant-a')).toHaveBeenCalledWith();
+      expect(await runKey('tenant-b')).toHaveBeenCalledWith(expect.any(ForbiddenError));
+    });
+
+    it('API key: tenant KEY mengalahkan tenant pemilik (key tenant-a milik user bertenant-b hanya boleh memilih tenant-a)', async () => {
+      apiKeyAuth('tenant-a');
+      findByIdMock.mockResolvedValue({
+        id: 'user-1',
+        email: 'b@e.com',
+        role: 'USER',
+        tenantId: 'tenant-b',
+      });
+      expect(await runKey('tenant-a')).toHaveBeenCalledWith();
+      expect(await runKey('tenant-b')).toHaveBeenCalledWith(expect.any(ForbiddenError));
+    });
+
+    it('API key: tanpa header tenant -> perilaku lama (lolos)', async () => {
+      apiKeyAuth('tenant-a');
+      findByIdMock.mockResolvedValue({
+        id: 'user-1',
+        email: 'b@e.com',
+        role: 'USER',
+        tenantId: 'tenant-a',
+      });
+      expect(await runKey(null)).toHaveBeenCalledWith();
+    });
   });
 
   it('melempar UnauthorizedError kalau header Authorization tidak ada', async () => {
