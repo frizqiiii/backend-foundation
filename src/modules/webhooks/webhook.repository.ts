@@ -1,5 +1,12 @@
 import type { PrismaClient, WebhookEndpoint } from '@prisma/client';
+import { getScopedPrisma } from '../../shared/tenant/tenant-context';
 
+/**
+ * R18 — `webhook_endpoints` ber-FORCE RLS. Semua query lewat `getScopedPrisma(this.prisma)`: kalau request
+ * membawa konteks tenant (`tenantMiddleware`), query berjalan di transaksi yang sudah `set_config('app.tenant_id')`.
+ * Memakai `this.prisma` langsung = koneksi tanpa tenant -> `create` ditolak 42501 (500) dan `findMany` kosong.
+ * Tanpa konteks tenant (mis. proses di luar request) hasilnya fail-closed: kosong / INSERT ditolak.
+ */
 export class WebhookRepository {
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -10,7 +17,7 @@ export class WebhookRepository {
     encryptedSecret: string;
     eventTypes: string[];
   }): Promise<WebhookEndpoint> {
-    return this.prisma.webhookEndpoint.create({
+    return getScopedPrisma(this.prisma).webhookEndpoint.create({
       data: {
         userId: data.userId,
         tenantId: data.tenantId,
@@ -22,18 +29,18 @@ export class WebhookRepository {
   }
 
   async findManyForUser(userId: string): Promise<WebhookEndpoint[]> {
-    return this.prisma.webhookEndpoint.findMany({
+    return getScopedPrisma(this.prisma).webhookEndpoint.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
     });
   }
 
   async findByIdForUser(id: string, userId: string): Promise<WebhookEndpoint | null> {
-    return this.prisma.webhookEndpoint.findFirst({ where: { id, userId } });
+    return getScopedPrisma(this.prisma).webhookEndpoint.findFirst({ where: { id, userId } });
   }
 
   async revoke(id: string): Promise<WebhookEndpoint> {
-    return this.prisma.webhookEndpoint.update({
+    return getScopedPrisma(this.prisma).webhookEndpoint.update({
       where: { id },
       data: { active: false, revokedAt: new Date() },
     });
@@ -51,7 +58,7 @@ export class WebhookRepository {
     eventType: string,
     tenantId: string | null
   ): Promise<WebhookEndpoint[]> {
-    return this.prisma.webhookEndpoint.findMany({
+    return getScopedPrisma(this.prisma).webhookEndpoint.findMany({
       where: {
         active: true,
         eventTypes: { has: eventType },
