@@ -3,6 +3,7 @@ import { prisma } from '../../shared/config/database';
 import { asyncHandler } from '../../shared/middlewares/async-handler';
 import { authMiddleware } from '../../shared/middlewares/auth.middleware';
 import { requirePermission } from '../../shared/middlewares/permission.middleware';
+import { requireTenantOrPlatformAdmin } from '../../shared/middlewares/stats-scope.middleware';
 import { AnalyticsRepository } from './analytics.repository';
 import { AnalyticsService } from './analytics.service';
 import { AnalyticsController } from './analytics.controller';
@@ -23,6 +24,7 @@ analyticsRouter.get(
   '/daily-active-users',
   authMiddleware,
   requirePermission('dashboard.read'),
+  requireTenantOrPlatformAdmin,
   asyncHandler(analyticsController.getDailyActiveUsers)
 );
 

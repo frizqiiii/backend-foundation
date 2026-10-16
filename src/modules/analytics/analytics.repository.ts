@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { assertPlatformScope } from '../../shared/tenant/stats-scope';
 
 /**
  * Repository Layer modul `analytics` (Phase 20 — Reporting & Analytics
@@ -37,6 +38,8 @@ export class AnalyticsRepository {
    * (jumlah user yang aktif, bukan jumlah event login).
    */
   async dailyActiveUsers(days: number): Promise<Array<{ date: string; count: number }>> {
+    // R21: `audit_logs` tanpa kolom `tenant_id`, jadi DAU hanya tersedia di mode PLATFORM.
+    assertPlatformScope();
     const rows = await this.prisma.$queryRaw<Array<{ date: Date; count: bigint }>>`
       SELECT
         day::date AS date,

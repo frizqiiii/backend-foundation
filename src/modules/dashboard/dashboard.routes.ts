@@ -3,6 +3,7 @@ import { prisma } from '../../shared/config/database';
 import { asyncHandler } from '../../shared/middlewares/async-handler';
 import { authMiddleware } from '../../shared/middlewares/auth.middleware';
 import { requirePermission } from '../../shared/middlewares/permission.middleware';
+import { requireTenantOrPlatformAdmin } from '../../shared/middlewares/stats-scope.middleware';
 import { DashboardRepository } from './dashboard.repository';
 import { DashboardService } from './dashboard.service';
 import { DashboardController } from './dashboard.controller';
@@ -17,11 +18,13 @@ dashboardRouter.get(
   '/stats',
   authMiddleware,
   requirePermission('dashboard.read'),
+  requireTenantOrPlatformAdmin,
   asyncHandler(dashboardController.getStats)
 );
 dashboardRouter.get(
   '/audit-summary',
   authMiddleware,
   requirePermission('dashboard.read'),
+  requireTenantOrPlatformAdmin,
   asyncHandler(dashboardController.getAuditSummary)
 );

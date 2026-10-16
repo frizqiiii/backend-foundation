@@ -34,6 +34,8 @@ const config: Config = {
     'export-rls\\.e2e\\.spec\\.ts$',
     // R18 — WebhookRepository di bawah RLS, juga butuh database SUNGGUHAN (`npm run test:rls`).
     'webhook-rls\\.e2e\\.spec\\.ts$',
+    // R21 — DashboardRepository di bawah RLS, juga butuh database SUNGGUHAN (`npm run test:rls`).
+    'dashboard-rls\\.e2e\\.spec\\.ts$',
   ],
   setupFiles: ['<rootDir>/jest.setup.ts'],
   clearMocks: true,

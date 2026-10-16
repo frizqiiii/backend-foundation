@@ -1,5 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { AnalyticsRepository } from './analytics.repository';
+import { runWithTenantContext } from '../../shared/tenant/tenant-context';
+import { ForbiddenError } from '../../shared/utils/http-error';
 
 describe('AnalyticsRepository', () => {
   describe('dailyActiveUsers', () => {
@@ -28,5 +30,17 @@ describe('AnalyticsRepository', () => {
 
       expect(result).toEqual([]);
     });
+  });
+
+  it('R21 — di mode tenant DITOLAK (audit_logs tanpa kolom tenant) dan TIDAK menjalankan query', async () => {
+    const queryRaw = jest.fn();
+    const repository = new AnalyticsRepository({ $queryRaw: queryRaw } as unknown as PrismaClient);
+
+    await expect(
+      runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme', db: null }, () =>
+        repository.dailyActiveUsers(7)
+      )
+    ).rejects.toThrow(ForbiddenError);
+    expect(queryRaw).not.toHaveBeenCalled();
   });
 });

@@ -3,7 +3,8 @@ export interface DashboardStatsDto {
     users: number;
     events: number;
     products: number;
-    uploads: number;
+    /** `null` di mode tenant (header X-Tenant-ID): tabel upload tidak punya kolom tenant, jadi tidak bisa dihitung per tenant. */
+    uploads: number | null;
   };
   usersByRole: Record<string, number>;
   eventsByCategory: Record<string, number>;

@@ -17,6 +17,7 @@ const config: Config = {
     '**/api-key-rls.e2e.spec.ts',
     '**/export-rls.e2e.spec.ts',
     '**/webhook-rls.e2e.spec.ts',
+    '**/dashboard-rls.e2e.spec.ts',
   ],
   testPathIgnorePatterns: ['/node_modules/'],
   setupFiles: ['<rootDir>/jest.setup.rls-e2e.ts'],
