@@ -1,16 +1,22 @@
 import type { PrismaClient } from '@prisma/client';
 import { DashboardRepository } from './dashboard.repository';
+import { runWithTenantContext } from '../../shared/tenant/tenant-context';
+import { ForbiddenError } from '../../shared/utils/http-error';
 
 function createMockPrisma(overrides: Record<string, unknown> = {}) {
-  return {
+  const client: Record<string, unknown> = {
     user: { count: jest.fn(), groupBy: jest.fn() },
     event: { count: jest.fn(), groupBy: jest.fn() },
     product: { count: jest.fn(), groupBy: jest.fn() },
     fileUpload: { count: jest.fn() },
     auditLog: { groupBy: jest.fn() },
     $queryRaw: jest.fn(),
+    $executeRaw: jest.fn(),
     ...overrides,
-  } as unknown as PrismaClient;
+  };
+  // R21: mode PLATFORM membaca events/products lewat `withRlsBypass` (`$transaction(cb)` + set_config bypass).
+  client.$transaction = jest.fn(async (cb: (tx: unknown) => unknown) => cb(client));
+  return client as unknown as PrismaClient;
 }
 
 describe('DashboardRepository', () => {
@@ -137,6 +143,141 @@ describe('DashboardRepository', () => {
           where: { createdAt: { gte: range.from, lte: range.to } },
         })
       );
+    });
+  });
+
+  describe('R21 — mode PLATFORM (tanpa tenant): events/products lewat transaksi bypass RLS', () => {
+    it('countEvents dan countProducts membuka transaksi dengan app.bypass_rls dan tidak memfilter tenant', async () => {
+      const prisma = createMockPrisma();
+      (prisma.event.count as jest.Mock).mockResolvedValue(5);
+      (prisma.product.count as jest.Mock).mockResolvedValue(3);
+      const repository = new DashboardRepository(prisma);
+
+      await repository.countEvents();
+      await repository.countProducts();
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+      expect(prisma.$executeRaw).toHaveBeenCalledTimes(2);
+      expect(prisma.event.count).toHaveBeenCalledWith({ where: { deletedAt: null } });
+      expect(prisma.product.count).toHaveBeenCalledWith({ where: { deletedAt: null } });
+    });
+
+    it('countUsers tidak memakai transaksi bypass (tabel users tidak ber-RLS)', async () => {
+      const prisma = createMockPrisma();
+      (prisma.user.count as jest.Mock).mockResolvedValue(1);
+
+      await new DashboardRepository(prisma).countUsers();
+
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('R21 — mode TENANT: hanya data tenant aktif', () => {
+    const inTenant = <T>(
+      prisma: PrismaClient,
+      fn: (repo: DashboardRepository) => Promise<T>,
+      tx: unknown = prisma
+    ) =>
+      runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme', db: tx as never }, () =>
+        fn(new DashboardRepository(prisma))
+      );
+
+    it('users difilter tenantId (satu-satunya pagar, tabel tidak ber-RLS)', async () => {
+      const prisma = createMockPrisma();
+      (prisma.user.count as jest.Mock).mockResolvedValue(2);
+      (prisma.user.groupBy as jest.Mock).mockResolvedValue([]);
+
+      await inTenant(prisma, (r) => r.countUsers());
+      await inTenant(prisma, (r) => r.countUsersByRole());
+
+      expect(prisma.user.count).toHaveBeenCalledWith({
+        where: { deletedAt: null, tenantId: 'tenant-1' },
+      });
+      expect(prisma.user.groupBy).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { deletedAt: null, tenantId: 'tenant-1' } })
+      );
+    });
+
+    it('events dan products dibaca lewat TX request (bukan bypass), dengan filter tenantId', async () => {
+      const prisma = createMockPrisma();
+      const tx = createMockPrisma();
+      (tx.event.count as jest.Mock).mockResolvedValue(4);
+      (tx.product.count as jest.Mock).mockResolvedValue(6);
+      (tx.event.groupBy as jest.Mock).mockResolvedValue([
+        { category: 'Musik', _count: { _all: 4 } },
+      ]);
+      (tx.product.groupBy as jest.Mock).mockResolvedValue([]);
+
+      await expect(inTenant(prisma, (r) => r.countEvents(), tx)).resolves.toBe(4);
+      await expect(inTenant(prisma, (r) => r.countProducts(), tx)).resolves.toBe(6);
+      await inTenant(prisma, (r) => r.countEventsByCategory(), tx);
+      await inTenant(prisma, (r) => r.countProductsByStatus(), tx);
+      await inTenant(prisma, (r) => r.countProductsByCategory(), tx);
+
+      const where = { deletedAt: null, tenantId: 'tenant-1' };
+      expect(tx.event.count).toHaveBeenCalledWith({ where });
+      expect(tx.product.count).toHaveBeenCalledWith({ where });
+      expect(tx.event.groupBy).toHaveBeenCalledWith(expect.objectContaining({ where }));
+      expect(tx.product.groupBy).toHaveBeenCalledTimes(2);
+      expect(prisma.event.count).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('countEventsUpcomingVsPast: dua count berurutan di TX request dengan filter tenantId', async () => {
+      const prisma = createMockPrisma();
+      const tx = createMockPrisma();
+      (tx.event.count as jest.Mock).mockResolvedValueOnce(2).mockResolvedValueOnce(1);
+
+      const result = await inTenant(prisma, (r) => r.countEventsUpcomingVsPast(), tx);
+
+      expect(result).toEqual({ upcoming: 2, past: 1 });
+      expect(tx.event.count).toHaveBeenCalledTimes(2);
+      expect(tx.event.count).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ where: expect.objectContaining({ tenantId: 'tenant-1' }) })
+      );
+    });
+
+    // `$queryRaw` dipanggil sebagai tagged template: argumen pertama string statis, sisanya nilai. Filter tenant
+    // disisipkan sebagai fragmen `Prisma.sql` bersarang, sehingga muncul sebagai SATU nilai bertipe Sql.
+    const fragmentOf = (prisma: PrismaClient): { strings: string[]; values: unknown[] } => {
+      const [, ...values] = (prisma.$queryRaw as jest.Mock).mock.calls[0] as unknown[];
+      return values.find((v) => v != null && typeof v === 'object' && 'strings' in v) as {
+        strings: string[];
+        values: unknown[];
+      };
+    };
+
+    it('signupsLast30Days menyisipkan filter tenant ke SQL (tenantId ikut sebagai parameter, bukan teks)', async () => {
+      const prisma = createMockPrisma();
+      (prisma.$queryRaw as jest.Mock).mockResolvedValue([]);
+
+      await inTenant(prisma, (r) => r.signupsLast30Days());
+
+      const fragment = fragmentOf(prisma);
+      expect(fragment.strings.join('')).toContain('u.tenant_id');
+      expect(fragment.strings.join('')).not.toContain('tenant-1');
+      expect(fragment.values).toEqual(['tenant-1']);
+    });
+
+    it('signupsLast30Days TANPA tenant: fragmen filter kosong', async () => {
+      const prisma = createMockPrisma();
+      (prisma.$queryRaw as jest.Mock).mockResolvedValue([]);
+
+      await new DashboardRepository(prisma).signupsLast30Days();
+
+      expect(fragmentOf(prisma).strings.join('').trim()).toBe('');
+    });
+
+    it('countUploads dan countAuditLogsByAction DITOLAK (tanpa kolom tenant, hanya mode platform)', async () => {
+      const prisma = createMockPrisma();
+
+      await expect(inTenant(prisma, (r) => r.countUploads())).rejects.toThrow(ForbiddenError);
+      await expect(inTenant(prisma, (r) => r.countAuditLogsByAction())).rejects.toThrow(
+        ForbiddenError
+      );
+      expect(prisma.fileUpload.count).not.toHaveBeenCalled();
+      expect(prisma.auditLog.groupBy).not.toHaveBeenCalled();
     });
   });
 });

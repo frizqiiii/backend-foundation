@@ -1,5 +1,6 @@
 import type { DashboardRepository } from './dashboard.repository';
 import type { DashboardStatsDto, AuditSummaryDto } from './dashboard.dto';
+import { getTenantContext } from '../../shared/tenant/tenant-context';
 
 export class DashboardService {
   constructor(private readonly dashboardRepository: DashboardRepository) {}
@@ -9,12 +10,17 @@ export class DashboardService {
     // ini saling independen (tidak ada yang butuh hasil query lain),
     // menjalankannya berurutan hanya akan menjumlahkan latency tanpa
     // manfaat apa pun.
+    // R21: `uploads` tidak punya kolom tenant, jadi di mode TENANT bernilai `null` (tidak tersedia), BUKAN 0.
+    const uploadsPromise =
+      getTenantContext().tenantId != null
+        ? Promise.resolve(null)
+        : this.dashboardRepository.countUploads();
     const [users, events, products, uploads, usersByRole, eventsByCategory, signups] =
       await Promise.all([
         this.dashboardRepository.countUsers(),
         this.dashboardRepository.countEvents(),
         this.dashboardRepository.countProducts(),
-        this.dashboardRepository.countUploads(),
+        uploadsPromise,
         this.dashboardRepository.countUsersByRole(),
         this.dashboardRepository.countEventsByCategory(),
         this.dashboardRepository.signupsLast30Days(),

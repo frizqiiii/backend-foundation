@@ -198,13 +198,13 @@ export class ExportService {
       // array `{date, count}` (tren harian, BUKAN satu angka total) —
       // diratakan jadi satu baris PER HARI, bukan dijejalkan sebagai
       // satu nilai (yang tidak akan muat ke kolom `string | number`).
-      void tenantId; // getStats() SUDAH tenant-aware lewat AsyncLocalStorage (lihat DashboardRepository), tidak perlu diteruskan eksplisit di sini.
+      void tenantId; // getStats() membaca konteks tenant dari AsyncLocalStorage (jalur sinkron). TIDAK ada konteks tenant di worker BullMQ: itu temuan R22.
       const stats = await this.dashboardService.getStats();
       const rows: Array<{ metric: string; value: string | number }> = [
         { metric: 'Total Users', value: stats.totals.users },
         { metric: 'Total Events', value: stats.totals.events },
         { metric: 'Total Products', value: stats.totals.products },
-        { metric: 'Total Uploads', value: stats.totals.uploads },
+        { metric: 'Total Uploads', value: stats.totals.uploads ?? 'N/A' },
         ...stats.signupsLast30Days.map((day) => ({
           metric: `Signups — ${day.date}`,
           value: day.count,

@@ -1,5 +1,6 @@
 import { DashboardService } from './dashboard.service';
 import type { DashboardRepository } from './dashboard.repository';
+import { runWithTenantContext } from '../../shared/tenant/tenant-context';
 
 describe('DashboardService', () => {
   let dashboardRepository: jest.Mocked<DashboardRepository>;
@@ -74,6 +75,39 @@ describe('DashboardService', () => {
       await dashboardService.getAuditSummary(range);
 
       expect(dashboardRepository.countAuditLogsByAction).toHaveBeenCalledWith(range);
+    });
+  });
+
+  describe('R21 — mode tenant', () => {
+    it('uploads bernilai null (bukan 0) dan countUploads TIDAK dipanggil; angka lain tetap terisi', async () => {
+      dashboardRepository.countUsers.mockResolvedValue(2);
+      dashboardRepository.countEvents.mockResolvedValue(1);
+      dashboardRepository.countProducts.mockResolvedValue(1);
+      dashboardRepository.countUsersByRole.mockResolvedValue([]);
+      dashboardRepository.countEventsByCategory.mockResolvedValue([]);
+      dashboardRepository.signupsLast30Days.mockResolvedValue([]);
+
+      const stats = await runWithTenantContext(
+        { tenantId: 'tenant-1', tenantSlug: 'acme', db: null },
+        () => dashboardService.getStats()
+      );
+
+      expect(stats.totals).toEqual({ users: 2, events: 1, products: 1, uploads: null });
+      expect(dashboardRepository.countUploads).not.toHaveBeenCalled();
+    });
+
+    it('mode platform (tanpa tenant) tetap menghitung uploads', async () => {
+      dashboardRepository.countUsers.mockResolvedValue(0);
+      dashboardRepository.countEvents.mockResolvedValue(0);
+      dashboardRepository.countProducts.mockResolvedValue(0);
+      dashboardRepository.countUploads.mockResolvedValue(9);
+      dashboardRepository.countUsersByRole.mockResolvedValue([]);
+      dashboardRepository.countEventsByCategory.mockResolvedValue([]);
+      dashboardRepository.signupsLast30Days.mockResolvedValue([]);
+
+      const stats = await dashboardService.getStats();
+
+      expect(stats.totals.uploads).toBe(9);
     });
   });
 });

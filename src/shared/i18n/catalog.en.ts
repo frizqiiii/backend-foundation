@@ -200,6 +200,10 @@ export const EN_MESSAGES: Readonly<Record<string, string>> = {
   'Anda tidak memiliki akses ke tenant yang diminta':
     'You do not have access to the requested tenant',
   'Pengguna tidak ditemukan': 'User not found',
+  'Tanpa header X-Tenant-ID, statistik ini hanya untuk admin platform':
+    'Without an X-Tenant-ID header, these statistics are for platform admins only',
+  'Metrik ini hanya tersedia untuk admin platform (tanpa header X-Tenant-ID)':
+    'This metric is only available to platform admins (without an X-Tenant-ID header)',
   'Tenant berhasil dibuat': 'Tenant created successfully',
   'Slug hanya boleh huruf kecil, angka, dan tanda hubung':
     'Slug may only contain lowercase letters, numbers, and hyphens',
