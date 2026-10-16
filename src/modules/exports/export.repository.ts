@@ -7,6 +7,7 @@ import type {
 } from '@prisma/client';
 import {
   getScopedPrisma,
+  getTenantContext,
   runInTenantTransaction,
   withTenantScope,
 } from '../../shared/tenant/tenant-context';
@@ -56,6 +57,26 @@ export class ExportRepository {
    */
   async findByIdForUser(id: string, userId: string): Promise<ExportJob | null> {
     return getScopedPrisma(this.prisma).exportJob.findFirst({ where: { id, userId } });
+  }
+
+  /**
+   * R22 — menjalankan pembangunan dataset export di dalam scope TENANT milik job.
+   *
+   * Worker BullMQ tidak lewat `tenantMiddleware`, jadi `getTenantContext()` kosong di sana. Tanpa scope ini,
+   * `UserRepository.findMany` tidak memfilter tenant dan repository statistik jatuh ke mode PLATFORM (angka global lewat
+   * bypass RLS): export admin tenant A memuat data semua tenant. Di sini `tenantId` dari data job dipasang sebagai
+   * konteks + transaksi ber-`app.tenant_id` (`withTenantScope`), sehingga kode yang SAMA dengan jalur request berlaku.
+   *
+   * Dengan transaksi request yang masih aktif (fallback sinkron) transaksi itu dipakai apa adanya.
+   *
+   * FAIL-CLOSED: tanpa tenant (`null`) dan tanpa konteks tenant aktif, ditolak. Meneruskannya sama dengan membangun dataset
+   * tanpa scope sama sekali (global). Export tanpa tenant memang tidak didukung (`export_jobs` ber-RLS menolak INSERT-nya).
+   */
+  async runInTenantScope<T>(tenantId: string | null, fn: () => Promise<T>): Promise<T> {
+    if (tenantId == null && getTenantContext().db == null) {
+      throw new Error('ExportRepository: export wajib terikat tenant (tenantId job kosong)');
+    }
+    return withTenantScope(this.prisma, tenantId, fn);
   }
 
   async markProcessing(id: string, tenantId: string | null): Promise<void> {
