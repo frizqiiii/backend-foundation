@@ -1,6 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { ExportRepository } from './export.repository';
-import { runWithTenantContext } from '../../shared/tenant/tenant-context';
+import { getTenantContext, runWithTenantContext } from '../../shared/tenant/tenant-context';
 
 function createMockPrisma(overrides: Record<string, unknown> = {}) {
   return {
@@ -254,6 +254,61 @@ describe('ExportRepository', () => {
 
       expect(prisma.$transaction).not.toHaveBeenCalled();
       expect(prisma.exportJob.update).toHaveBeenCalledTimes(1);
+    });
+    // R22 — `runInTenantScope`: scope tenant untuk PEMBANGUNAN dataset (bukan hanya `mark*`).
+    describe('runInTenantScope (R22)', () => {
+      it('TANPA konteks (worker): membuka transaksi dengan app.tenant_id dari data job dan memasang konteks tenant selama fn', async () => {
+        const tx = createMockTx();
+        const prisma = createPrismaWithTx(tx);
+        const repository = new ExportRepository(prisma);
+        let seen: { tenantId: string | null; db: unknown } | undefined;
+
+        const result = await repository.runInTenantScope('tenant-1', async () => {
+          const ctx = getTenantContext();
+          seen = { tenantId: ctx.tenantId, db: ctx.db };
+          return 'hasil';
+        });
+
+        expect(result).toBe('hasil');
+        expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+        expect(tx.$executeRaw.mock.calls[0]).toContain('tenant-1');
+        expect(seen).toEqual({ tenantId: 'tenant-1', db: tx });
+      });
+
+      it('DENGAN tx ambient (fallback sinkron): memakai tx itu, tanpa transaksi baru', async () => {
+        const tx = createMockTx();
+        const prisma = createPrismaWithTx(tx);
+        const repository = new ExportRepository(prisma);
+
+        const result = await asAmbient(tx, () =>
+          repository.runInTenantScope('tenant-1', async () => 'hasil')
+        );
+
+        expect(result).toBe('hasil');
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('tenantId null TANPA konteks ditolak (fail-closed): fn tidak dijalankan, tidak ada transaksi', async () => {
+        const prisma = createMockPrisma({ $transaction: jest.fn() });
+        const repository = new ExportRepository(prisma);
+        const fn = jest.fn().mockResolvedValue('tidak-boleh');
+
+        await expect(repository.runInTenantScope(null, fn)).rejects.toThrow(/terikat tenant/);
+
+        expect(fn).not.toHaveBeenCalled();
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('error dari fn diteruskan apa adanya', async () => {
+        const tx = createMockTx();
+        const repository = new ExportRepository(createPrismaWithTx(tx));
+
+        await expect(
+          repository.runInTenantScope('tenant-1', async () => {
+            throw new Error('query gagal');
+          })
+        ).rejects.toThrow('query gagal');
+      });
     });
   });
 });

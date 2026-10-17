@@ -12,9 +12,20 @@ import { objectStorageProvider } from '../../shared/integrations/storage';
 import { exportQueue, type ExportJobData } from '../../shared/queue/export.queue';
 import { tryEnqueue } from '../../shared/queue/safe-enqueue';
 import { logger } from '../../shared/logger';
-import { NotFoundError } from '../../shared/utils/http-error';
+import { ForbiddenError, NotFoundError } from '../../shared/utils/http-error';
 
 const EXPORT_MAX_ROWS = 5000; // Sama dengan batas `EventService.exportEvents` (Phase 16) — konsisten satu angka di seluruh aplikasi untuk "berapa banyak baris export wajar sebelum harus dipisah/di-paginasi".
+
+/**
+ * R22 — tipe export yang sumber datanya TIDAK punya kolom `tenant_id` (`audit_logs`, `file_uploads`), sehingga tidak bisa
+ * dipisah per tenant. Untuk export milik tenant, tipe ini ditolak di awal (403) alih-alih memuat data semua tenant.
+ * Memisahkannya per tenant butuh migrasi skema (tambah `tenant_id` di kedua tabel), sengaja bukan bagian R22.
+ */
+const TENANT_UNSUPPORTED_EXPORT_TYPES: ReadonlySet<ExportType> = new Set<ExportType>([
+  'AUDIT_LOG',
+  'SYSTEM_STATISTICS',
+  'DAILY_ACTIVE_USERS',
+]);
 
 /**
  * Export Service (Phase 19 — Enterprise Platform).
@@ -52,6 +63,12 @@ export class ExportService {
     type: ExportType;
     format: ExportFormat;
   }): Promise<ExportJob> {
+    if (input.tenantId != null && TENANT_UNSUPPORTED_EXPORT_TYPES.has(input.type)) {
+      throw new ForbiddenError(
+        'Tipe export ini belum tersedia per tenant karena sumber datanya tidak dipisah per tenant'
+      );
+    }
+
     const exportJob = await this.exportRepository.create(input);
 
     const jobData: ExportJobData = {
@@ -125,7 +142,12 @@ export class ExportService {
   private async generateFile(
     data: ExportJobData
   ): Promise<{ buffer: Buffer; contentType: string; extension: string }> {
-    const { rows, columns, title } = await this.buildDataset(data.type, data.tenantId);
+    // R22 — HANYA pembacaan data yang berjalan di dalam scope tenant (satu transaksi DB). Render file dan upload ke
+    // object storage ada di luar scope, supaya transaksi tidak ditahan selama pekerjaan non-database yang bisa lambat.
+    const { rows, columns, title } = await this.exportRepository.runInTenantScope(
+      data.tenantId,
+      () => this.buildDataset(data.type)
+    );
 
     if (data.format === 'CSV') {
       return {
@@ -159,8 +181,7 @@ export class ExportService {
    * `toPdfBuffer`).
    */
   private async buildDataset(
-    type: ExportType,
-    tenantId: string | null
+    type: ExportType
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ): Promise<{ rows: unknown[]; columns: ExportColumn<any>[]; title: string }> {
     if (type === 'USERS') {
@@ -198,7 +219,8 @@ export class ExportService {
       // array `{date, count}` (tren harian, BUKAN satu angka total) —
       // diratakan jadi satu baris PER HARI, bukan dijejalkan sebagai
       // satu nilai (yang tidak akan muat ke kolom `string | number`).
-      void tenantId; // getStats() membaca konteks tenant dari AsyncLocalStorage (jalur sinkron). TIDAK ada konteks tenant di worker BullMQ: itu temuan R22.
+      // R22: `getStats()` membaca konteks tenant dari AsyncLocalStorage; `generateFile` memasangnya (`runInTenantScope`)
+      // baik di jalur sinkron maupun worker BullMQ.
       const stats = await this.dashboardService.getStats();
       const rows: Array<{ metric: string; value: string | number }> = [
         { metric: 'Total Users', value: stats.totals.users },

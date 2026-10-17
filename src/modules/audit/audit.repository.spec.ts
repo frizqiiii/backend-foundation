@@ -1,6 +1,8 @@
 import type { PrismaClient } from '@prisma/client';
 import { createHash } from 'crypto';
 import { AuditRepository } from './audit.repository';
+import { runWithTenantContext } from '../../shared/tenant/tenant-context';
+import { ForbiddenError } from '../../shared/utils/http-error';
 
 function canonicalize(row: {
   id: string;
@@ -444,5 +446,18 @@ describe('AuditRepository', () => {
       take: 50,
     });
     expect(result).toBe(rows);
+  });
+  // R22 — `audit_logs` tanpa kolom tenant: di mode tenant findRecent membaca audit SEMUA tenant, jadi ditolak.
+  it('R22: findRecent DITOLAK saat tenant context aktif (tabel tanpa kolom tenant), database tidak disentuh', async () => {
+    const prisma = createMockPrisma();
+    const repository = new AuditRepository(prisma);
+
+    await expect(
+      runWithTenantContext({ tenantId: 'tenant-1', tenantSlug: 'acme', db: null }, () =>
+        repository.findRecent(50)
+      )
+    ).rejects.toThrow(ForbiddenError);
+
+    expect(prisma.auditLog.findMany).not.toHaveBeenCalled();
   });
 });

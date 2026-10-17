@@ -44,7 +44,10 @@ export const exportsPaths = {
       description:
         'Mengembalikan 202 (job diterima, BELUM selesai) — poll GET /exports/{id} untuk cek ' +
         'status. Butuh header `Idempotency-Key` (idempotencyMiddleware) supaya retry naif dari ' +
-        'client tidak membuat job export dobel (query ribuan baris + generate file berulang kali).',
+        'client tidak membuat job export dobel (query ribuan baris + generate file berulang kali). ' +
+        'Export selalu dibatasi ke tenant dari header `X-Tenant-ID`. Tipe `AUDIT_LOG`, ' +
+        '`SYSTEM_STATISTICS`, dan `DAILY_ACTIVE_USERS` ditolak (403) untuk export bertenant karena ' +
+        'sumber datanya (audit_logs, file_uploads) belum punya kolom tenant.',
       security: [{ bearerAuth: [] }],
       parameters: [
         {

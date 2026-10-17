@@ -1,6 +1,7 @@
 import { randomUUID, createHash } from 'crypto';
 import type { PrismaClient, AuditLog, Prisma } from '@prisma/client';
 import type { CreateAuditLogInput } from './audit.types';
+import { assertPlatformScope } from '../../shared/tenant/stats-scope';
 
 const CHAIN_STATE_ID = 'singleton';
 
@@ -248,6 +249,8 @@ export class AuditRepository {
    * login" personal satu user.
    */
   async findRecent(limit: number): Promise<AuditLog[]> {
+    // R22: `audit_logs` tanpa kolom `tenant_id`. Di mode tenant ia membaca audit SEMUA tenant, jadi hanya mode PLATFORM.
+    assertPlatformScope();
     return this.prisma.auditLog.findMany({
       orderBy: { createdAt: 'desc' },
       take: limit,

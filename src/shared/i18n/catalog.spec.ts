@@ -31,6 +31,10 @@ const SRC_ROOT = path.resolve(__dirname, '../..');
 const INTENTIONALLY_UNTRANSLATED_PREFIXES: ReadonlyArray<readonly [string, string]> = [
   ['Validation failed', 'sudah berbahasa Inggris (dokumentasi OpenAPI)'],
   ['ExportService:', 'error wiring internal (developer), bukan pesan untuk pengguna API'],
+  [
+    'ExportRepository:',
+    'error invariant internal (pengaman R22), job tanpa tenant ditolak di worker, tidak sampai ke pengguna API',
+  ],
   ['Audit log hash chain', 'log/error job terjadwal internal'],
   ['Format ciphertext', 'error internal enkripsi'],
   ['Tenant context tidak aktif', 'error pemrograman internal, disamarkan di production'],

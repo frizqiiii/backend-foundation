@@ -5,7 +5,8 @@ import type { AuditRepository } from '../audit/audit.repository';
 import type { DashboardService } from '../dashboard/dashboard.service';
 import type { ReportingService } from '../reporting/reporting.service';
 import type { AnalyticsService } from '../analytics/analytics.service';
-import { NotFoundError } from '../../shared/utils/http-error';
+import { ForbiddenError, NotFoundError } from '../../shared/utils/http-error';
+import { getTenantContext, runWithTenantContext } from '../../shared/tenant/tenant-context';
 
 jest.mock('../../shared/queue/export.queue', () => ({
   // `add` di-mock di sini, TIDAK di `beforeEach` biasa — supaya bisa
@@ -61,6 +62,11 @@ describe('ExportService', () => {
       markProcessing: jest.fn(),
       markCompleted: jest.fn(),
       markFailed: jest.fn(),
+      // R22 — default: lewati begitu saja (tanpa konteks tenant). Tes R22 di bawah menggantinya dengan versi yang
+      // memasang konteks tenant seperti repository sungguhan.
+      runInTenantScope: jest
+        .fn()
+        .mockImplementation((_tenantId: string | null, fn: () => Promise<unknown>) => fn()),
     } as unknown as jest.Mocked<ExportRepository>;
 
     userRepository = {
@@ -368,6 +374,124 @@ describe('ExportService', () => {
         null,
         expect.stringContaining('reportingService belum di-wire')
       );
+    });
+  });
+  // R22 — worker BullMQ tidak punya konteks tenant. Tanpa scope, `userRepository.findMany` tidak memfilter tenant
+  // (file export admin tenant A memuat user SEMUA tenant) dan repository statistik jatuh ke mode PLATFORM (angka global
+  // lewat bypass RLS). Perbaikannya: dataset dibangun DI DALAM scope tenant milik job.
+  describe('R22 — scope tenant jalur worker', () => {
+    // Meniru `ExportRepository.runInTenantScope` sungguhan: memasang konteks tenant selama `fn`.
+    function useRealisticTenantScope() {
+      exportRepository.runInTenantScope.mockImplementation(
+        (tenantId: string | null, fn: () => Promise<unknown>) =>
+          runWithTenantContext({ tenantId, tenantSlug: null, db: null }, fn) as never
+      );
+    }
+
+    const jobOf = (type: 'USERS' | 'DASHBOARD_STATS' | 'USER_STATISTICS', tenantId: string) => ({
+      exportJobId: 'exp-1',
+      type,
+      format: 'CSV' as const,
+      userId: 'user-1',
+      tenantId,
+    });
+
+    it('dataset USERS dibangun di dalam scope tenant job (findMany melihat tenantId job)', async () => {
+      useRealisticTenantScope();
+      let tenantSeenByQuery: string | null | undefined;
+      userRepository.findMany.mockImplementation(async () => {
+        tenantSeenByQuery = getTenantContext().tenantId;
+        return { data: [], total: 0 };
+      });
+
+      await service.processExportJob(jobOf('USERS', 'tenant-A'));
+
+      expect(exportRepository.runInTenantScope).toHaveBeenCalledWith(
+        'tenant-A',
+        expect.any(Function)
+      );
+      expect(tenantSeenByQuery).toBe('tenant-A');
+    });
+
+    it.each([['DASHBOARD_STATS'], ['USER_STATISTICS']] as const)(
+      'dataset %s juga dibangun di dalam scope tenant job',
+      async (type) => {
+        useRealisticTenantScope();
+        let tenantSeen: string | null | undefined;
+        dashboardService.getStats.mockImplementation(async () => {
+          tenantSeen = getTenantContext().tenantId;
+          return {
+            totals: { users: 1, events: 0, products: 0, uploads: null },
+            usersByRole: {},
+            eventsByCategory: {},
+            signupsLast30Days: [],
+          } as never;
+        });
+        reportingService.getUserStatistics.mockImplementation(async () => {
+          tenantSeen = getTenantContext().tenantId;
+          return { total: 0, byRole: {}, signupsLast30Days: [] } as never;
+        });
+
+        await service.processExportJob(jobOf(type, 'tenant-A'));
+
+        expect(tenantSeen).toBe('tenant-A');
+      }
+    );
+
+    it('render file dan upload ke storage terjadi DI LUAR scope tenant (tidak menahan transaksi DB selama upload)', async () => {
+      useRealisticTenantScope();
+      let tenantSeenDuringUpload: string | null | undefined = 'belum-dicek';
+      mockStorage.upload.mockImplementation(async () => {
+        tenantSeenDuringUpload = getTenantContext().tenantId;
+        return { url: 'https://storage.example.com/exports/file.csv' };
+      });
+
+      await service.processExportJob(jobOf('USERS', 'tenant-A'));
+
+      expect(tenantSeenDuringUpload).toBeNull();
+    });
+
+    it('kegagalan di dalam scope tetap menandai FAILED dan melempar ulang (retry BullMQ)', async () => {
+      useRealisticTenantScope();
+      userRepository.findMany.mockRejectedValue(new Error('db down'));
+
+      await expect(service.processExportJob(jobOf('USERS', 'tenant-A'))).rejects.toThrow('db down');
+
+      expect(exportRepository.markFailed).toHaveBeenCalledWith('exp-1', 'tenant-A', 'db down');
+      expect(mockStorage.upload).not.toHaveBeenCalled();
+    });
+  });
+
+  // R22 — tipe yang sumbernya tidak punya kolom tenant (audit_logs, file_uploads) tidak bisa dipisah per tenant.
+  describe('R22 — requestExport menolak tipe yang tidak bisa dipisah per tenant', () => {
+    beforeEach(() => {
+      // Tes lama di atas mengosongkan `mockExportQueue.add` (simulasi queue null) dan itu menular ke tes berikutnya.
+      mockExportQueue.add = jest.fn().mockResolvedValue(undefined);
+    });
+
+    it.each([['AUDIT_LOG'], ['SYSTEM_STATISTICS'], ['DAILY_ACTIVE_USERS']] as const)(
+      'tenant aktif + tipe %s ditolak 403 sebelum job dibuat atau di-enqueue',
+      async (type) => {
+        await expect(
+          service.requestExport({ userId: 'user-1', tenantId: 'tenant-A', type, format: 'CSV' })
+        ).rejects.toThrow(ForbiddenError);
+
+        expect(exportRepository.create).not.toHaveBeenCalled();
+        expect(mockExportQueue.add).not.toHaveBeenCalled();
+      }
+    );
+
+    it.each([
+      ['USERS'],
+      ['DASHBOARD_STATS'],
+      ['USER_STATISTICS'],
+      ['EVENT_STATISTICS'],
+      ['PRODUCT_STATISTICS'],
+    ] as const)('tenant aktif + tipe %s tetap diterima', async (type) => {
+      await service.requestExport({ userId: 'user-1', tenantId: 'tenant-A', type, format: 'CSV' });
+
+      expect(exportRepository.create).toHaveBeenCalledTimes(1);
+      expect(mockExportQueue.add).toHaveBeenCalledTimes(1);
     });
   });
 });
