@@ -7,7 +7,14 @@ describe('cacheKeys', () => {
 
   it('productsListPattern / productsList', () => {
     expect(cacheKeys.productsListPattern()).toBe('cache:products:list:*');
-    expect(cacheKeys.productsList('page=1&limit=20')).toBe('cache:products:list:page=1&limit=20');
+    expect(cacheKeys.productsList('tenant-1', 'page=1&limit=20')).toBe(
+      'cache:products:list:tenant-1:page=1&limit=20'
+    );
+    // R15: tenant berbeda + query sama HARUS menghasilkan kunci berbeda, tetap tercakup pola wildcard.
+    expect(cacheKeys.productsList('tenant-1', 'q')).not.toBe(
+      cacheKeys.productsList('tenant-2', 'q')
+    );
+    expect(cacheKeys.productsList('tenant-1', 'q').startsWith('cache:products:list:')).toBe(true);
   });
 
   it('eventsListPattern / eventsList', () => {

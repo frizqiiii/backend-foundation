@@ -16,7 +16,13 @@ export const cacheKeys = {
    * `invalidateByPattern` saat ada produk yang dibuat/di-upgrade.
    */
   productsListPattern: (): string => 'cache:products:list:*',
-  productsList: (queryKey: string): string => `cache:products:list:${queryKey}`,
+  /**
+   * R15 (isolasi tenant, pola sama dengan `eventsList` di bawah) — kunci WAJIB memuat `tenantId`, kalau tidak hasil
+   * list tenant A disajikan ke tenant B selama TTL begitu list produk benar-benar terbaca. Pola invalidasi
+   * (`productsListPattern`) tetap wildcard `cache:products:list:*`, jadi satu write tetap menghapus semua tenant.
+   */
+  productsList: (tenantId: string, queryKey: string): string =>
+    `cache:products:list:${tenantId}:${queryKey}`,
   /**
    * Listing Events punya banyak variasi (page/limit/filter/search) —
    * setiap kombinasi query dapat key sendiri, tapi SEMUANYA berbagi
