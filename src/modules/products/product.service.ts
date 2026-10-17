@@ -14,6 +14,7 @@ import { hasPermission } from '../../shared/security/permissions';
 import { getOrSetCache, invalidateByPattern } from '../../shared/utils/cache';
 import { cacheKeys } from '../../shared/utils/cache-keys';
 import { buildPaginatedResult, type PaginatedResult } from '../../shared/pagination';
+import { getTenantContext } from '../../shared/tenant/tenant-context';
 
 const PRODUCTS_LIST_CACHE_TTL_SECONDS = 60;
 
@@ -64,18 +65,26 @@ export class ProductService {
    */
   async listProducts(query: ListProductsQueryDto): Promise<PaginatedResult<ProductResponseDto>> {
     const queryKey = JSON.stringify(query, Object.keys(query).sort());
+    const fetchPage = async () => {
+      const { data, total } = await this.productRepository.findMany(query);
+      return buildPaginatedResult(
+        data.map((product) => this.toResponseDto(product)),
+        total,
+        query.page,
+        query.limit
+      );
+    };
+
+    // R15 (isolasi tenant, pola sama dengan `EventService.listEvents`): tanpa konteks tenant TIDAK ada cache, karena
+    // kunci tanpa tenant akan dipakai bersama oleh semua tenant. Dengan tenant, kunci memuat `tenantId`.
+    const { tenantId } = getTenantContext();
+    if (!tenantId) {
+      return fetchPage();
+    }
     return getOrSetCache(
-      cacheKeys.productsList(queryKey),
+      cacheKeys.productsList(tenantId, queryKey),
       PRODUCTS_LIST_CACHE_TTL_SECONDS,
-      async () => {
-        const { data, total } = await this.productRepository.findMany(query);
-        return buildPaginatedResult(
-          data.map((product) => this.toResponseDto(product)),
-          total,
-          query.page,
-          query.limit
-        );
-      }
+      fetchPage
     );
   }
 

@@ -124,6 +124,64 @@ describe('ProductRepository', () => {
     });
   });
 
+  describe('findMany di bawah RLS (R15)', () => {
+    const q = { page: 1, limit: 10 } as ListProductsQueryDto;
+
+    it('tenant aktif + tx: membaca lewat TX request (bukan primary/replica), findMany lalu count berurutan, tanpa $transaction', async () => {
+      const primary = createMockPrisma();
+      const replica = createMockPrisma();
+      const tx = createMockPrisma();
+      (tx.product.findMany as jest.Mock).mockResolvedValue([{ id: 'p1' }]);
+      (tx.product.count as jest.Mock).mockResolvedValue(1);
+      const repository = new ProductRepository(primary, replica);
+
+      const result = await runWithTenantContext(
+        { tenantId: 'tenant-1', tenantSlug: 'acme', db: tx as never },
+        () => repository.findMany(q)
+      );
+
+      expect(result).toEqual({ data: [{ id: 'p1' }], total: 1 });
+      expect(tx.product.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { deletedAt: null, tenantId: 'tenant-1' } })
+      );
+      expect(tx.product.count).toHaveBeenCalledWith({
+        where: { deletedAt: null, tenantId: 'tenant-1' },
+      });
+      expect(replica.product.findMany).not.toHaveBeenCalled();
+      expect(primary.product.findMany).not.toHaveBeenCalled();
+      expect(replica.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('tenant aktif: filter status/category tetap ikut', async () => {
+      const tx = createMockPrisma();
+      (tx.product.findMany as jest.Mock).mockResolvedValue([]);
+      (tx.product.count as jest.Mock).mockResolvedValue(0);
+      const repository = new ProductRepository(createMockPrisma());
+
+      await runWithTenantContext(
+        { tenantId: 'tenant-1', tenantSlug: 'acme', db: tx as never },
+        () => repository.findMany({ ...q, status: 'ACTIVE', category: 'PREMIUM' })
+      );
+
+      expect(tx.product.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { deletedAt: null, tenantId: 'tenant-1', status: 'ACTIVE', category: 'PREMIUM' },
+        })
+      );
+    });
+
+    it('TANPA tenant: jalur lama prismaRead + $transaction tidak berubah', async () => {
+      const replica = createMockPrisma();
+      (replica.$transaction as jest.Mock).mockResolvedValue([[{ id: 'p9' }], 1]);
+      const repository = new ProductRepository(createMockPrisma(), replica);
+
+      const result = await repository.findMany(q);
+
+      expect(result).toEqual({ data: [{ id: 'p9' }], total: 1 });
+      expect(replica.$transaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('findById', () => {
     it('TANPA tenant context: where hanya id + deletedAt:null', async () => {
       const prisma = createMockPrisma();

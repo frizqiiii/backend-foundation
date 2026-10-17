@@ -32,6 +32,8 @@ const config: Config = {
     'api-key-rls\\.e2e\\.spec\\.ts$',
     // R19 — ExportRepository di bawah RLS, juga butuh database SUNGGUHAN (`npm run test:rls`).
     'export-rls\\.e2e\\.spec\\.ts$',
+    // R15 — ProductRepository.findMany di bawah RLS, juga butuh database SUNGGUHAN (`npm run test:rls`).
+    'product-rls\\.e2e\\.spec\\.ts$',
     // R18 — WebhookRepository di bawah RLS, juga butuh database SUNGGUHAN (`npm run test:rls`).
     'webhook-rls\\.e2e\\.spec\\.ts$',
     // R21 — DashboardRepository di bawah RLS, juga butuh database SUNGGUHAN (`npm run test:rls`).

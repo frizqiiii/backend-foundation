@@ -16,6 +16,7 @@ const config: Config = {
     '**/event-rls.e2e.spec.ts',
     '**/api-key-rls.e2e.spec.ts',
     '**/export-rls.e2e.spec.ts',
+    '**/product-rls.e2e.spec.ts',
     '**/webhook-rls.e2e.spec.ts',
     '**/dashboard-rls.e2e.spec.ts',
   ],

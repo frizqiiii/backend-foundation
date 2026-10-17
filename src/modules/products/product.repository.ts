@@ -25,14 +25,15 @@ export class ProductRepository {
    * lengkap trade-off replication lag di `DATABASE_REPLICA_URL`
    * (`env.ts`) sebelum menerapkan pola ini ke repository lain.
    *
-   * Fase 4 (RLS) — `prismaRead` SENGAJA BELUM ikut dilindungi RLS di
-   * iterasi ini (read-replica adalah koneksi/server FISIK terpisah
-   * dari primary, tidak bisa ikut transaksi `$transaction` yang sama
-   * dengan `prisma` primary — butuh desain policy/transaksi read-only
-   * TERPISAH). `findMany` di bawah TETAP mengandalkan filter aplikasi
-   * manual (`where.tenantId`) seperti sebelum Fase 4 — dicatat sebagai
-   * gap yang diketahui & disengaja, BUKAN celah yang terlewat, di
-   * docs/tenant-migration-strategy.md.
+   * Fase 4 (RLS) — `prismaRead` TIDAK BISA ikut transaksi request yang
+   * membawa `app.tenant_id` (read-replica adalah koneksi/server FISIK
+   * terpisah dari primary), padahal `products` ber-FORCE RLS: dibaca
+   * lewat koneksi tanpa `app.tenant_id`, hasilnya SELALU kosong untuk
+   * role non-superuser (R15). Karena itu `findMany` memakai
+   * `prismaRead` HANYA saat tidak ada tenant aktif; saat tenant aktif
+   * ia membaca lewat `getScopedPrisma` (primary, di dalam transaksi
+   * request). Trade-off yang diterima: pembacaan tenant-scoped TIDAK
+   * lagi memakai read-replica sampai ada desain RLS khusus replica.
    */
   constructor(
     private readonly prisma: PrismaClient,
@@ -86,9 +87,14 @@ export class ProductRepository {
    * lintas tenant), bukan tiba-tiba kosong karena disangka
    * "tenant kosong = tidak ada apa-apa".
    *
-   * Fase 4 (RLS) — method ini TETAP memakai `this.prismaRead` APA
-   * ADANYA (BUKAN `getScopedPrisma`) — lihat catatan RLS di komentar
-   * constructor di atas untuk alasannya.
+   * Fase 4 (RLS, R15) — kalau tenant aktif, baca lewat
+   * `getScopedPrisma(this.prisma)` (primary, transaksi request yang
+   * membawa `app.tenant_id`): `findMany` dan `count` dijalankan
+   * BERURUTAN di klien itu, karena `Prisma.TransactionClient` tidak
+   * punya `$transaction` (tidak ada transaksi bersarang). Tanpa tenant
+   * aktif, jalur lama dengan `prismaRead` dipertahankan apa adanya.
+   * Filter `where.tenantId` tetap dipasang sebagai pertahanan berlapis
+   * di atas RLS.
    */
   async findMany(query: ListProductsQueryDto): Promise<{ data: Product[]; total: number }> {
     const { tenantId } = getTenantContext();
@@ -101,6 +107,17 @@ export class ProductRepository {
     }
     if (query.category) {
       where.category = query.category;
+    }
+
+    if (tenantId) {
+      const client = getScopedPrisma(this.prisma);
+      const data = await client.product.findMany({
+        where,
+        ...pagination(query.page, query.limit),
+        orderBy: { createdAt: 'desc' },
+      });
+      const total = await client.product.count({ where });
+      return { data, total };
     }
 
     const [data, total] = await this.prismaRead.$transaction([
