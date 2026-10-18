@@ -1,5 +1,9 @@
 import type { PrismaClient, WebhookEndpoint } from '@prisma/client';
-import { getScopedPrisma } from '../../shared/tenant/tenant-context';
+import {
+  getScopedPrisma,
+  getTenantContext,
+  runInTenantTransaction,
+} from '../../shared/tenant/tenant-context';
 
 /**
  * R18 — `webhook_endpoints` ber-FORCE RLS. Semua query lewat `getScopedPrisma(this.prisma)`: kalau request
@@ -47,23 +51,26 @@ export class WebhookRepository {
   }
 
   /**
-   * Dipakai `WebhookService.trigger` — SELURUH endpoint AKTIF yang
-   * terdaftar untuk `eventType` ini, opsional di-scope ke tenant
-   * tertentu (Phase 11) kalau tenant context aktif saat event
-   * terjadi. `eventTypes` array — `has` adalah operator Prisma untuk
-   * "array kolom ini mengandung nilai X", BUKAN "array parameter ini
-   * mengandung X" (arah sebaliknya).
+   * Dipakai `WebhookService.trigger` — SELURUH endpoint AKTIF milik tenant AKTIF yang terdaftar untuk `eventType`.
+   *
+   * R20 — tenant SELALU diambil dari konteks (bukan parameter), jadi pemanggil tidak bisa meminta tenant lain. Tanpa
+   * konteks tenant hasilnya kosong (fail-closed; tabel ber-RLS memang tidak terbaca tanpa `app.tenant_id`).
+   *
+   * Query berjalan di transaksi MANDIRI (`runInTenantTransaction`, koneksi sendiri), bukan di transaksi request.
+   * Alasannya: `trigger` dijalankan tanpa ditunggu (`dispatchWebhook`), jadi bisa masih berjalan saat transaksi request
+   * sudah di-commit ("Transaction already closed"), dan query yang gagal di transaksi request akan membuat Postgres
+   * membatalkan SELURUH transaksi itu (operasi bisnisnya ikut hilang).
+   * `eventTypes: { has }` = "array kolom ini mengandung nilai X" (arah sebaliknya dari yang mungkin terkira).
    */
-  async findActiveByEventType(
-    eventType: string,
-    tenantId: string | null
-  ): Promise<WebhookEndpoint[]> {
-    return getScopedPrisma(this.prisma).webhookEndpoint.findMany({
-      where: {
-        active: true,
-        eventTypes: { has: eventType },
-        ...(tenantId ? { tenantId } : {}),
-      },
-    });
+  async findActiveByEventType(eventType: string): Promise<WebhookEndpoint[]> {
+    const { tenantId } = getTenantContext();
+    if (!tenantId) {
+      return [];
+    }
+    return runInTenantTransaction(this.prisma, tenantId, () =>
+      getScopedPrisma(this.prisma).webhookEndpoint.findMany({
+        where: { active: true, eventTypes: { has: eventType }, tenantId },
+      })
+    );
   }
 }

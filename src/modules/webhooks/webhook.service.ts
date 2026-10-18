@@ -89,31 +89,39 @@ export class WebhookService {
    * membatalkan/menggagalkan operasi bisnis yang memicunya.
    */
   async trigger(eventType: string, payload: Record<string, unknown>): Promise<void> {
-    const { tenantId } = getTenantContext();
-    const endpoints = await this.webhookRepository.findActiveByEventType(eventType, tenantId);
+    // R20 — SELURUH isi dibungkus: dokumentasi di atas menjanjikan `trigger` tidak pernah melempar, tetapi sebelumnya
+    // pencarian endpoint (query database) berada di luar try/catch, jadi kegagalan di sana merambat ke pemanggil.
+    try {
+      const endpoints = await this.webhookRepository.findActiveByEventType(eventType);
 
-    await Promise.all(
-      endpoints.map(async (endpoint) => {
-        try {
-          await enqueueWebhookDelivery({
-            webhookEndpointId: endpoint.id,
-            url: endpoint.url,
-            secret: encryptionService.decrypt(endpoint.secret),
-            eventType,
-            payload,
-            // Finding #22 — dibuat SEKALI di sini (bukan di dalam
-            // `processWebhookDeliveryJob`), supaya tetap SAMA di
-            // setiap percobaan retry job ini. Lihat komentar lengkap
-            // pada `deliveryId` di `WebhookDeliveryJobData`.
-            deliveryId: crypto.randomUUID(),
-          });
-        } catch (error) {
-          logger.warn(
-            { err: error, webhookEndpointId: endpoint.id, eventType },
-            'WebhookService.trigger: gagal enqueue delivery untuk satu endpoint — endpoint lain tetap diproses'
-          );
-        }
-      })
-    );
+      await Promise.all(
+        endpoints.map(async (endpoint) => {
+          try {
+            await enqueueWebhookDelivery({
+              webhookEndpointId: endpoint.id,
+              url: endpoint.url,
+              secret: encryptionService.decrypt(endpoint.secret),
+              eventType,
+              payload,
+              // Finding #22 — dibuat SEKALI di sini (bukan di dalam
+              // `processWebhookDeliveryJob`), supaya tetap SAMA di
+              // setiap percobaan retry job ini. Lihat komentar lengkap
+              // pada `deliveryId` di `WebhookDeliveryJobData`.
+              deliveryId: crypto.randomUUID(),
+            });
+          } catch (error) {
+            logger.warn(
+              { err: error, webhookEndpointId: endpoint.id, eventType },
+              'WebhookService.trigger: gagal enqueue delivery untuk satu endpoint — endpoint lain tetap diproses'
+            );
+          }
+        })
+      );
+    } catch (error) {
+      logger.warn(
+        { err: error, eventType },
+        'WebhookService.trigger: gagal mencari endpoint — webhook event ini dilewati, operasi bisnis tidak terpengaruh'
+      );
+    }
   }
 }

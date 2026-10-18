@@ -83,37 +83,70 @@ describe('WebhookRepository', () => {
     expect(result).toBe(revoked);
   });
 
-  describe('findActiveByEventType', () => {
-    it('TANPA tenantId: filter active + eventTypes.has, tanpa filter tenantId', async () => {
-      const prisma = createMockPrisma();
-      (prisma.webhookEndpoint.findMany as jest.Mock).mockResolvedValue([]);
+  // R20 — jalur dispatch: tenant dari KONTEKS (bukan parameter), query di transaksi MANDIRI (bukan transaksi request).
+  describe('findActiveByEventType (R20)', () => {
+    function createDispatchMocks() {
+      const ownTx = {
+        $executeRaw: jest.fn().mockResolvedValue(1),
+        webhookEndpoint: { findMany: jest.fn().mockResolvedValue([{ id: 'w1' }]) },
+      };
+      const prisma = createMockPrisma({
+        $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(ownTx)),
+      });
+      return { prisma, ownTx };
+    }
+
+    it('TANPA konteks tenant: kosong (fail-closed) dan tidak menyentuh database sama sekali', async () => {
+      const { prisma, ownTx } = createDispatchMocks();
       const repository = new WebhookRepository(prisma);
 
-      await repository.findActiveByEventType('event.created', null);
+      const result = await runWithTenantContext(
+        { tenantId: null, tenantSlug: null, db: null },
+        () => repository.findActiveByEventType('event.created')
+      );
 
-      expect(prisma.webhookEndpoint.findMany).toHaveBeenCalledWith({
-        where: {
-          active: true,
-          eventTypes: { has: 'event.created' },
-        },
-      });
+      expect(result).toEqual([]);
+      expect(
+        (prisma as unknown as { $transaction: jest.Mock }).$transaction
+      ).not.toHaveBeenCalled();
+      expect(ownTx.webhookEndpoint.findMany).not.toHaveBeenCalled();
+      expect(prisma.webhookEndpoint.findMany).not.toHaveBeenCalled();
     });
 
-    it('DENGAN tenantId: menambahkan filter tenantId ke where', async () => {
-      const prisma = createMockPrisma();
-      (prisma.webhookEndpoint.findMany as jest.Mock).mockResolvedValue([]);
+    it('DENGAN tenant: membuka transaksi MANDIRI, set app.tenant_id, filter active + eventTypes.has + tenantId', async () => {
+      const { prisma, ownTx } = createDispatchMocks();
+      const requestTx = createRequestTxSpy();
       const repository = new WebhookRepository(prisma);
 
-      await repository.findActiveByEventType('event.created', 'tenant-1');
+      const result = await runWithTenantContext(
+        {
+          tenantId: 'tenant-1',
+          tenantSlug: 'acme',
+          db: requestTx as unknown as Prisma.TransactionClient,
+        },
+        () => repository.findActiveByEventType('event.created')
+      );
 
-      expect(prisma.webhookEndpoint.findMany).toHaveBeenCalledWith({
+      expect(result).toEqual([{ id: 'w1' }]);
+      expect((prisma as unknown as { $transaction: jest.Mock }).$transaction).toHaveBeenCalledTimes(
+        1
+      );
+      expect(ownTx.$executeRaw).toHaveBeenCalledTimes(1);
+      expect(ownTx.webhookEndpoint.findMany).toHaveBeenCalledWith({
         where: {
           active: true,
           eventTypes: { has: 'event.created' },
           tenantId: 'tenant-1',
         },
       });
+      // Transaksi request TIDAK dipakai: kegagalan/penutupan transaksi itu tidak boleh memengaruhi dispatch.
+      expect(requestTx.webhookEndpoint.findMany).not.toHaveBeenCalled();
+      expect(prisma.webhookEndpoint.findMany).not.toHaveBeenCalled();
     });
+
+    function createRequestTxSpy() {
+      return { webhookEndpoint: { findMany: jest.fn() } };
+    }
   });
 
   // R18 — `webhook_endpoints` ber-FORCE RLS. Saat request membawa tenant (`tenantMiddleware`), context membawa `tx`
@@ -221,27 +254,6 @@ describe('WebhookRepository', () => {
         where: { id: 'w1' },
         data: { active: false, revokedAt: expect.any(Date) },
       });
-      expectPrismaUntouched(prisma);
-    });
-
-    it('findActiveByEventType memakai tx (jalur trigger)', async () => {
-      const prisma = createMockPrisma();
-      const tx = createMockTx();
-      tx.webhookEndpoint.findMany.mockResolvedValue([{ id: 'w1' }]);
-      const repository = new WebhookRepository(prisma);
-
-      const result = await withTx(tx, () =>
-        repository.findActiveByEventType('event.created', 'tenant-1')
-      );
-
-      expect(tx.webhookEndpoint.findMany).toHaveBeenCalledWith({
-        where: {
-          active: true,
-          eventTypes: { has: 'event.created' },
-          tenantId: 'tenant-1',
-        },
-      });
-      expect(result).toEqual([{ id: 'w1' }]);
       expectPrismaUntouched(prisma);
     });
   });

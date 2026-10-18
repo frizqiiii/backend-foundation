@@ -1,14 +1,10 @@
 import { Router } from 'express';
-import { prisma } from '../../shared/config/database';
 import { asyncHandler } from '../../shared/middlewares/async-handler';
 import { authMiddleware } from '../../shared/middlewares/auth.middleware';
 import { idempotencyMiddleware } from '../../shared/reliability/idempotency.middleware';
-import { WebhookRepository } from './webhook.repository';
-import { WebhookService } from './webhook.service';
+import { webhookService } from './webhook.instance';
 import { WebhookController } from './webhook.controller';
 
-const webhookRepository = new WebhookRepository(prisma);
-const webhookService = new WebhookService(webhookRepository);
 const webhookController = new WebhookController(webhookService);
 
 export const webhookRouter = Router();
