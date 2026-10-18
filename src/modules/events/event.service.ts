@@ -13,6 +13,11 @@ import { getOrSetCache, invalidateByPattern } from '../../shared/utils/cache';
 import { cacheKeys } from '../../shared/utils/cache-keys';
 import { getTenantContext } from '../../shared/tenant/tenant-context';
 import { enqueueNotificationJob } from '../../shared/queue/notification.queue';
+import {
+  dispatchWebhook,
+  WEBHOOK_EVENT_TYPES,
+  type WebhookTrigger,
+} from '../webhooks/webhook.events';
 
 const EVENTS_LIST_CACHE_TTL_SECONDS = 60;
 
@@ -31,12 +36,17 @@ export interface RequesterContext {
  * jadi pengecekan itu dilakukan di sini (`assertCanModify`).
  */
 export class EventService {
-  constructor(private readonly eventRepository: EventRepository) {}
+  constructor(
+    private readonly eventRepository: EventRepository,
+    private readonly webhooks?: WebhookTrigger
+  ) {}
 
   async createEvent(input: CreateEventDto, ownerId: string): Promise<EventResponseDto> {
     const event = await this.eventRepository.create({ ...input, ownerId });
     await invalidateByPattern(cacheKeys.eventsListPattern());
-    return this.toResponseDto(event);
+    const response = this.toResponseDto(event);
+    dispatchWebhook(this.webhooks, WEBHOOK_EVENT_TYPES.EVENT_CREATED, { ...response });
+    return response;
   }
 
   /**
@@ -134,7 +144,9 @@ export class EventService {
       requester,
       `Event "${existing.title}" Anda telah diubah oleh admin`
     );
-    return this.toResponseDto(updated);
+    const response = this.toResponseDto(updated);
+    dispatchWebhook(this.webhooks, WEBHOOK_EVENT_TYPES.EVENT_UPDATED, { ...response });
+    return response;
   }
 
   async deleteEvent(id: string, requester: RequesterContext): Promise<void> {
@@ -152,6 +164,7 @@ export class EventService {
       requester,
       `Event "${existing.title}" Anda telah dihapus oleh admin`
     );
+    dispatchWebhook(this.webhooks, WEBHOOK_EVENT_TYPES.EVENT_DELETED, { id });
   }
 
   /**

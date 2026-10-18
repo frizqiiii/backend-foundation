@@ -138,6 +138,23 @@ describe('WebhookService', () => {
       expect(mockedEnqueue).toHaveBeenCalledTimes(2);
     });
 
+    it('R20 — TIDAK melempar error kalau pencarian endpoint (database) gagal, dan tidak meng-enqueue apa pun', async () => {
+      webhookRepository.findActiveByEventType.mockRejectedValue(new Error('db down'));
+
+      await expect(
+        webhookService.trigger('product.created', { id: 'p1' })
+      ).resolves.toBeUndefined();
+      expect(mockedEnqueue).not.toHaveBeenCalled();
+    });
+
+    it('R20 — mencari endpoint untuk eventType yang dipicu (tenant diambil repository dari konteks)', async () => {
+      webhookRepository.findActiveByEventType.mockResolvedValue([]);
+
+      await webhookService.trigger('product.deleted', { id: 'p1' });
+
+      expect(webhookRepository.findActiveByEventType).toHaveBeenCalledWith('product.deleted');
+    });
+
     it('tidak melakukan apa pun kalau tidak ada endpoint yang cocok', async () => {
       webhookRepository.findActiveByEventType.mockResolvedValue([]);
 

@@ -21,8 +21,8 @@ import { WebhookRepository } from './webhook.repository';
  *     dan memastikan test lain bermakna: kalau kontrol ini gagal, role kamu mem-bypass RLS.
  *  2. `create` lewat repository berhasil dan tersimpan dengan tenantId yang benar.
  *  3. `findManyForUser` / `findByIdForUser` hanya melihat endpoint milik tenant aktif.
- *  4. `findActiveByEventType` hanya mengembalikan endpoint tenant aktif, walau diminta tenantId tenant lain,
- *     dan kosong (fail-closed) tanpa konteks tenant.
+ *  4. `findActiveByEventType` (R20) hanya mengembalikan endpoint tenant dari KONTEKS (transaksi mandiri, juga tanpa
+ *     transaksi request), dan kosong (fail-closed) tanpa konteks tenant.
  *  5. `revoke` berhasil untuk tenant pemilik dan DITOLAK untuk tenant lain.
  */
 describe('WebhookRepository di bawah FORCE RLS — database sungguhan (R18)', () => {
@@ -143,7 +143,7 @@ describe('WebhookRepository di bawah FORCE RLS — database sungguhan (R18)', ()
     ).toBeNull();
   });
 
-  it('findActiveByEventType: hanya endpoint tenant aktif; tenantId tenant lain tidak membuka data; tanpa tenant kosong', async () => {
+  it('findActiveByEventType (R20): hanya endpoint tenant aktif, lewat transaksi mandiri; tanpa tenant kosong', async () => {
     const endpointA = await asTenant(tenantAId, () =>
       repository.create(endpointData(tenantAId, 'aktif-a'))
     );
@@ -151,27 +151,32 @@ describe('WebhookRepository di bawah FORCE RLS — database sungguhan (R18)', ()
       repository.create(endpointData(tenantBId, 'aktif-b'))
     );
 
-    const asA = await asTenant(tenantAId, () =>
-      repository.findActiveByEventType(eventType, tenantAId)
+    // Konteks tenant A TANPA transaksi request (meniru dispatch yang berjalan setelah transaksi request selesai).
+    const asA = await runWithTenantContext(
+      { tenantId: tenantAId, tenantSlug: 'rls-test', db: null },
+      () => repository.findActiveByEventType(eventType)
     );
     expect(asA.map((e) => e.id)).toContain(endpointA.id);
     expect(asA.map((e) => e.id)).not.toContain(endpointB.id);
 
-    // Jalur trigger tanpa filter tenantId di where: RLS tetap membatasi ke tenant aktif.
-    const asANoFilter = await asTenant(tenantAId, () =>
-      repository.findActiveByEventType(eventType, null)
+    const asB = await runWithTenantContext(
+      { tenantId: tenantBId, tenantSlug: 'rls-test', db: null },
+      () => repository.findActiveByEventType(eventType)
     );
-    expect(asANoFilter.map((e) => e.id)).toContain(endpointA.id);
-    expect(asANoFilter.map((e) => e.id)).not.toContain(endpointB.id);
+    expect(asB.map((e) => e.id)).toContain(endpointB.id);
+    expect(asB.map((e) => e.id)).not.toContain(endpointA.id);
 
-    // Meminta tenantId tenant lain dari dalam konteks tenant A: tidak ada baris yang terlihat.
-    const crossTenant = await asTenant(tenantAId, () =>
-      repository.findActiveByEventType(eventType, tenantBId)
-    );
-    expect(crossTenant).toEqual([]);
+    // Di dalam transaksi request tenant A: tetap hanya endpoint A.
+    const inRequestA = await asTenant(tenantAId, () => repository.findActiveByEventType(eventType));
+    expect(inRequestA.map((e) => e.id)).toContain(endpointA.id);
+    expect(inRequestA.map((e) => e.id)).not.toContain(endpointB.id);
 
     // Tanpa konteks tenant sama sekali: fail-closed, bukan membaca semua tenant.
-    expect(await repository.findActiveByEventType(eventType, null)).toEqual([]);
+    expect(
+      await runWithTenantContext({ tenantId: null, tenantSlug: null, db: null }, () =>
+        repository.findActiveByEventType(eventType)
+      )
+    ).toEqual([]);
   });
 
   it('revoke: DITOLAK untuk tenant lain (baris tidak berubah), berhasil untuk pemilik', async () => {
@@ -188,9 +193,7 @@ describe('WebhookRepository di bawah FORCE RLS — database sungguhan (R18)', ()
     expect((await rowOf(endpoint.id))?.revokedAt).toBeInstanceOf(Date);
 
     // Setelah dicabut, tidak lagi muncul di jalur trigger.
-    const active = await asTenant(tenantAId, () =>
-      repository.findActiveByEventType(eventType, tenantAId)
-    );
+    const active = await asTenant(tenantAId, () => repository.findActiveByEventType(eventType));
     expect(active.map((e) => e.id)).not.toContain(endpoint.id);
   });
 });

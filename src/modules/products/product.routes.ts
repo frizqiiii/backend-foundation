@@ -7,6 +7,7 @@ import { ProductService } from './product.service';
 import { ProductController } from './product.controller';
 import { AuditRepository } from '../audit/audit.repository';
 import { AuditService } from '../audit/audit.service';
+import { webhookService } from '../webhooks/webhook.instance';
 
 /**
  * Composition root untuk modul `products` — pola dependency injection
@@ -16,7 +17,7 @@ import { AuditService } from '../audit/audit.service';
  * Prisma — TIDAK ada import langsung dari `modules/users/*` di sini.
  */
 const productRepository = new ProductRepository(prisma, prismaRead);
-const productService = new ProductService(productRepository);
+const productService = new ProductService(productRepository, webhookService);
 const auditService = new AuditService(new AuditRepository(prisma));
 const productController = new ProductController(productService, auditService);
 

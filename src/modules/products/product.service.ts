@@ -15,6 +15,11 @@ import { getOrSetCache, invalidateByPattern } from '../../shared/utils/cache';
 import { cacheKeys } from '../../shared/utils/cache-keys';
 import { buildPaginatedResult, type PaginatedResult } from '../../shared/pagination';
 import { getTenantContext } from '../../shared/tenant/tenant-context';
+import {
+  dispatchWebhook,
+  WEBHOOK_EVENT_TYPES,
+  type WebhookTrigger,
+} from '../webhooks/webhook.events';
 
 const PRODUCTS_LIST_CACHE_TTL_SECONDS = 60;
 
@@ -35,7 +40,10 @@ export interface RequesterContext {
  * dari layer manapun di atasnya.
  */
 export class ProductService {
-  constructor(private readonly productRepository: ProductRepository) {}
+  constructor(
+    private readonly productRepository: ProductRepository,
+    private readonly webhooks?: WebhookTrigger
+  ) {}
 
   async createProduct(input: CreateProductDto, userId: string): Promise<ProductResponseDto> {
     if (input.price < 0) {
@@ -52,7 +60,9 @@ export class ProductService {
 
     await invalidateByPattern(cacheKeys.productsListPattern());
 
-    return this.toResponseDto(product);
+    const response = this.toResponseDto(product);
+    dispatchWebhook(this.webhooks, WEBHOOK_EVENT_TYPES.PRODUCT_CREATED, { ...response });
+    return response;
   }
 
   /**
@@ -150,7 +160,9 @@ export class ProductService {
 
     await invalidateByPattern(cacheKeys.productsListPattern());
 
-    return this.toResponseDto(upgraded);
+    const response = this.toResponseDto(upgraded);
+    dispatchWebhook(this.webhooks, WEBHOOK_EVENT_TYPES.PRODUCT_UPGRADED, { ...response });
+    return response;
   }
 
   /**
@@ -174,6 +186,7 @@ export class ProductService {
 
     await this.productRepository.delete(productId);
     await invalidateByPattern(cacheKeys.productsListPattern());
+    dispatchWebhook(this.webhooks, WEBHOOK_EVENT_TYPES.PRODUCT_DELETED, { id: productId });
   }
 
   private toResponseDto(product: {

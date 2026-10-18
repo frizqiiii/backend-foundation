@@ -8,12 +8,13 @@ import { EventService } from './event.service';
 import { EventController } from './event.controller';
 import { AuditRepository } from '../audit/audit.repository';
 import { AuditService } from '../audit/audit.service';
+import { webhookService } from '../webhooks/webhook.instance';
 
 /**
  * Composition root untuk modul `events`.
  */
 const eventRepository = new EventRepository(prisma);
-const eventService = new EventService(eventRepository);
+const eventService = new EventService(eventRepository, webhookService);
 const auditService = new AuditService(new AuditRepository(prisma));
 const eventController = new EventController(eventService, auditService);
 
