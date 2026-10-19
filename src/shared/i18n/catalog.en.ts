@@ -225,6 +225,8 @@ export const EN_MESSAGES: Readonly<Record<string, string>> = {
   'Webhook endpoint berhasil didaftarkan. SIMPAN secret ini sekarang — tidak akan ditampilkan lagi.':
     'Webhook endpoint registered successfully. SAVE this secret now — it will not be shown again.',
   'Minimal satu event type harus dipilih': 'At least one event type must be selected',
+  'Event type tidak dikenal. Lihat daftar event type yang didukung di dokumentasi API':
+    'Unknown event type. See the API documentation for the supported event types',
   'URL tidak valid': 'Invalid URL',
   'Webhook endpoint tidak ditemukan': 'Webhook endpoint not found',
   'Pemilik API key ini tidak ditemukan': 'The owner of this API key was not found',
