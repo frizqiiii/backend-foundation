@@ -55,6 +55,10 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   variabel `DB_ADMIN_PASSWORD` (wajib di `docker-compose.prod.yml`), dan `docs/postgres-roles.md` (termasuk jalur
   migrasi untuk volume yang sudah ada).
 - Variabel `POSTGRES_HOST_PORT`, `REDIS_HOST_PORT`, `APP_HOST_PORT` untuk `docker-compose.yml` (dev).
+- **Webhook kini benar-benar dipicu** (R20, #63): `ProductService` dan `EventService` memicu `product.created`,
+  `product.upgraded`, `product.deleted`, `event.created`, `event.updated`, dan `event.deleted`. Payload sama dengan
+  response API (untuk event hapus hanya `{ id }`). Konstanta di `src/modules/webhooks/webhook.events.ts`. Nama event
+  type saat registrasi endpoint masih bebas (belum divalidasi terhadap daftar ini).
 
 ### Diubah
 - Kuota per-tenant dan per-API-key tidak lagi satu angka flat: sekarang bergantung plan
@@ -74,8 +78,32 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   bawaan) tetap membangun binding native `bcrypt`.
 - **`docker-compose.prod.yml` kini menolak start tanpa `DB_ADMIN_PASSWORD`** (superuser PostgreSQL, terpisah dari
   `DB_PASSWORD` milik role aplikasi). Deployment yang sudah ada perlu menambahkannya di `.env`.
+- **Export tipe `AUDIT_LOG`, `SYSTEM_STATISTICS`, dan `DAILY_ACTIVE_USERS` kini ditolak (403) untuk request ber-tenant**
+  (R22, #61): sumber datanya (`audit_logs`, `file_uploads`) belum punya kolom `tenant_id`, jadi hasilnya tidak bisa
+  dibatasi per tenant. Export tipe lain tidak berubah.
+- **Statistik dashboard, analytics, dan reporting kini dibatasi ke tenant request** (R21, #60); sebelumnya tidak
+  dibatasi per tenant. Mode lintas tenant ("platform") hanya untuk `ADMIN` tanpa tenant. Bagian yang tidak punya
+  `tenant_id` (audit log, upload) ditolak atau bernilai kosong (N/A) di mode tenant.
+- **Daftar produk dengan tenant aktif dibaca dari primary di dalam transaksi request, tidak lagi dari read-replica**
+  (R15, #62): replica tidak bisa ikut transaksi yang membawa `app.tenant_id`. Tanpa tenant, jalur lama tidak berubah.
+- `WebhookRepository.findActiveByEventType(eventType)` tidak lagi menerima parameter `tenantId` (R20): tenant selalu
+  diambil dari konteks request.
 
 ### Keamanan
+- **Header `X-Tenant-ID` kini terikat ke identitas pemanggil** (temuan S1, #58): sebelumnya user atau API key milik
+  satu tenant bisa memilih tenant lain lewat header (terukur: JWT dan API key dengan `X-Tenant-ID: acme` sama-sama
+  mendapat 200). Kini `assertTenantBinding` di `authMiddleware`: tenant diambil dari user (JWT) atau dari API key
+  (`key.tenantId`, fallback ke tenant pemilik); user tanpa tenant hanya boleh memilih tenant kalau `ADMIN`; selain itu
+  403. Endpoint publik tanpa identitas (mis. `GET /products`) tidak terpengaruh.
+- **Export di worker kini dibangun di dalam scope tenant job-nya** (temuan R22, #61): export `USERS` memuat user semua
+  tenant (terukur: 5 baris termasuk user tenant lain, seharusnya 3), export statistik menghitung seluruh database, dan
+  `AUDIT_LOG` bersifat global. Worker tidak punya konteks tenant; kini `tenantId` dari data job dipakai
+  (`ExportRepository.runInTenantScope`) dan job tanpa tenant ditolak.
+- **Statistik dashboard/analytics/reporting dibatasi ke tenant request** (temuan R21, #60); akses lintas tenant hanya
+  lewat mode platform untuk `ADMIN` tanpa tenant, dan `AuditRepository.findRecent` dijaga `assertPlatformScope`.
+- **Cache daftar event kini memuat `tenantId`** (temuan S2, #59): sebelumnya satu kunci cache dipakai semua tenant,
+  sehingga tenant lain bisa menerima daftar event yang di-cache tenant pertama selama TTL 60 detik. Tanpa konteks
+  tenant tidak ada cache. Daftar produk memakai pola yang sama (R15, #62).
 - **RLS kini benar-benar berlaku di stack Docker Compose**: `POSTGRES_USER=app_user` menjadikan aplikasi **superuser
   bootstrap** yang mem-bypass Row-Level Security walaupun `FORCE ROW LEVEL SECURITY` (diukur: `select count(*) from
   products` = 3 untuk superuser vs 0 untuk role biasa pada data yang sama). Berlaku untuk `docker-compose.yml` dan
@@ -97,6 +125,18 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   `.github/dependabot.yml` (ekosistem `github-actions`) menjaga pin tetap diperbarui lewat PR.
 
 ### Diperbaiki
+- **Webhook tidak pernah terkirim** (R20, #63): `WebhookService.trigger()` tidak punya pemanggil di kode produksi
+  (terukur: 0 job di antrean `webhook-delivery` setelah membuat/mengupgrade/menghapus produk dan membuat event; kini
+  5 job dengan isolasi tenant utuh). Selain itu `trigger` melempar error kalau pencarian endpoint gagal (padahal
+  dokumentasinya menjanjikan tidak pernah melempar), dan query-nya berjalan di transaksi request: query yang gagal
+  membatalkan seluruh transaksi bisnis. Kini dispatch tidak ditunggu, tidak pernah melempar, dan mencari endpoint di
+  transaksi tenant mandiri. Risiko yang diketahui: webhook bisa masuk antrean sebelum transaksi request ter-commit.
+- **Repository tabel ber-`FORCE ROW LEVEL SECURITY` memakai koneksi tanpa `app.tenant_id`** (R15–R19, #49, #55–#57,
+  #62): dengan role aplikasi non-superuser, penulisan ditolak (`42501`, HTTP 500) dan pembacaan kosong. Terukur pada
+  `POST /webhooks` (500), `POST /exports` (500), dan `GET /products` (selalu kosong); mekanisme yang sama diperbaiki
+  untuk events dan API key. Kini repository memakai `getScopedPrisma` (transaksi request yang membawa tenant); worker memakai transaksi mikro
+  per langkah dari `tenantId` data job (`runInTenantTransaction`, `withTenantScope`). Stack Compose sebelumnya
+  menyembunyikan ini karena aplikasi berjalan sebagai superuser (lihat bagian Keamanan di atas).
 - **Image Docker tidak punya binding `bcrypt` dan tidak bisa menjalankan modul auth**: `npm ci --ignore-scripts` melewati
   install script bcrypt, dan tidak ada `npm rebuild`. Terbukti di `docker build` + `docker run` (`bcrypt_lib.node` tidak
   ada). Kini `npm rebuild bcrypt` di stage `deps` dan `prod-deps`; diverifikasi di Alpine.
