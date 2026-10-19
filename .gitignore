@@ -39,6 +39,7 @@ backups/*.dump.meta
 
 # Local object storage (OBJECT_STORAGE_PROVIDER=local)
 local-uploads/
+uploads-local/
 
 # OS/editor noise
 .DS_Store
