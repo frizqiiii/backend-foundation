@@ -1,4 +1,5 @@
 import { errorResponse, validationErrorResponse, serverErrorResponse } from './openapi.shared';
+import { WEBHOOK_EVENT_TYPE_LIST } from '../modules/webhooks/webhook.events';
 
 const unauthorized = errorResponse(
   'Access token tidak ada/tidak valid/kedaluwarsa',
@@ -43,7 +44,7 @@ export const webhooksPaths = {
                 url: { type: 'string', format: 'uri', example: 'https://example.com/hooks' },
                 eventTypes: {
                   type: 'array',
-                  items: { type: 'string' },
+                  items: { type: 'string', enum: [...WEBHOOK_EVENT_TYPE_LIST] },
                   minItems: 1,
                   example: ['product.created'],
                 },

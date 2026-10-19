@@ -57,8 +57,7 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
 - Variabel `POSTGRES_HOST_PORT`, `REDIS_HOST_PORT`, `APP_HOST_PORT` untuk `docker-compose.yml` (dev).
 - **Webhook kini benar-benar dipicu** (R20, #63): `ProductService` dan `EventService` memicu `product.created`,
   `product.upgraded`, `product.deleted`, `event.created`, `event.updated`, dan `event.deleted`. Payload sama dengan
-  response API (untuk event hapus hanya `{ id }`). Konstanta di `src/modules/webhooks/webhook.events.ts`. Nama event
-  type saat registrasi endpoint masih bebas (belum divalidasi terhadap daftar ini).
+  response API (untuk event hapus hanya `{ id }`). Konstanta di `src/modules/webhooks/webhook.events.ts`.
 
 ### Diubah
 - Kuota per-tenant dan per-API-key tidak lagi satu angka flat: sekarang bergantung plan
@@ -88,6 +87,10 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   (R15, #62): replica tidak bisa ikut transaksi yang membawa `app.tenant_id`. Tanpa tenant, jalur lama tidak berubah.
 - `WebhookRepository.findActiveByEventType(eventType)` tidak lagi menerima parameter `tenantId` (R20): tenant selalu
   diambil dari konteks request.
+- **`POST /api/v1/webhooks` kini menolak (422) `eventTypes` di luar daftar yang dipicu aplikasi** (R20b): `product.created`,
+  `product.upgraded`, `product.deleted`, `event.created`, `event.updated`, `event.deleted`. Sebelumnya nama bebas,
+  sehingga salah ketik tersimpan dan tidak pernah cocok dengan event mana pun. Endpoint yang sudah terdaftar tidak
+  diubah. Daftar juga tampil sebagai `enum` di OpenAPI.
 
 ### Keamanan
 - **Header `X-Tenant-ID` kini terikat ke identitas pemanggil** (temuan S1, #58): sebelumnya user atau API key milik

@@ -53,7 +53,9 @@ describe('WebhookController', () => {
     });
 
     it('P5 — melempar UnauthorizedError kalau req.user tidak ada', async () => {
-      const req = createMockRequest({ body: { url: 'https://example.com', eventTypes: ['x'] } });
+      const req = createMockRequest({
+        body: { url: 'https://example.com', eventTypes: ['product.created'] },
+      });
       const res = createMockResponse();
 
       await expect(controller.create(req, res)).rejects.toThrow(UnauthorizedError);
@@ -63,7 +65,18 @@ describe('WebhookController', () => {
     it('P5 — body tidak valid (url bukan URL) dilempar sebagai error validasi', async () => {
       const req = createMockRequest({
         user: { id: 'user-1' },
-        body: { url: 'bukan-url', eventTypes: ['x'] },
+        body: { url: 'bukan-url', eventTypes: ['product.created'] },
+      });
+      const res = createMockResponse();
+
+      await expect(controller.create(req, res)).rejects.toThrow();
+      expect(webhookService.register).not.toHaveBeenCalled();
+    });
+
+    it('R20b — event type yang tidak dikenal ditolak sebelum menyentuh service', async () => {
+      const req = createMockRequest({
+        user: { id: 'user-1' },
+        body: { url: 'https://example.com/hooks', eventTypes: ['prduct.created'] },
       });
       const res = createMockResponse();
 

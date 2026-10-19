@@ -15,6 +15,12 @@ export const WEBHOOK_EVENT_TYPES = {
 
 export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[keyof typeof WEBHOOK_EVENT_TYPES];
 
+/** Nilai di atas sebagai tuple non-kosong, bentuk yang dibutuhkan `z.enum` dan skema OpenAPI. */
+export const WEBHOOK_EVENT_TYPE_LIST = Object.values(WEBHOOK_EVENT_TYPES) as [
+  WebhookEventType,
+  ...WebhookEventType[],
+];
+
 /** Kontrak minimal yang dibutuhkan service bisnis; `WebhookService` memenuhinya. */
 export interface WebhookTrigger {
   trigger(eventType: string, payload: Record<string, unknown>): Promise<void>;

@@ -97,8 +97,18 @@ URL pihak ketiga yang didaftarkan user.
 **Alur pemakaian**:
 1. User mendaftarkan endpoint: `POST /api/v1/webhooks` dengan
    `{ url, eventTypes }` → mendapat `secret` (HANYA ditampilkan sekali).
-2. Kode aplikasi (mis. di `ProductService.create`) memanggil
-   `webhookService.trigger('product.created', productData)`.
+   `eventTypes` harus dari daftar yang dipicu aplikasi (selain itu 422):
+   `product.created`, `product.upgraded`, `product.deleted`,
+   `event.created`, `event.updated`, `event.deleted`
+   (`modules/webhooks/webhook.events.ts`).
+2. Kode aplikasi (`ProductService`, `EventService`) memanggil
+   `dispatchWebhook(...)` setelah operasi bisnis berhasil — TIDAK
+   ditunggu dan tidak pernah melempar error ke pemanggil. Webhook hanya
+   terkirim untuk request yang membawa konteks tenant (header
+   `X-Tenant-ID`); request tanpa tenant tidak memicu webhook.
+   Batasan yang diketahui: job bisa masuk antrean sebelum transaksi
+   request ter-commit, jadi kalau request gagal sesudah service selesai,
+   webhook tetap terkirim untuk data yang tidak tersimpan.
 3. `WebhookService.trigger` mencari SEMUA endpoint aktif yang
    terdaftar untuk event tersebut, mengirim payload ke masing-masing
    lewat `shared/queue/webhook-delivery.queue.ts` (antrian BullMQ
