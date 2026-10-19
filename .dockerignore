@@ -11,3 +11,6 @@ Dockerfile
 docker-compose.yml
 docker-compose.prod.yml
 .dockerignore
+
+# Local object storage (OBJECT_STORAGE_PROVIDER=local)
+uploads-local/
