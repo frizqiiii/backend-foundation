@@ -173,6 +173,23 @@ export class ApiKeyService {
   }
 
   /**
+   * R23 — dipakai `tenantMiddleware` untuk memilih tenant dari API key ketika request TIDAK mengirim `X-Tenant-ID`.
+   * Hanya MEMBACA: tidak memperbarui `lastUsedAt` dan tidak melempar error. Key yang tidak dikenal, sudah dicabut, atau
+   * kedaluwarsa menghasilkan `null` (middleware tidak membuka transaksi tenant apa pun untuknya); penolakan resminya
+   * tetap dilakukan `authenticate` di `authMiddleware`. Key tanpa tenant juga `null`.
+   */
+  async findTenantIdByRawKey(rawKey: string): Promise<string | null> {
+    const apiKey = await this.apiKeyRepository.findByHash(hashKey(rawKey));
+    if (!apiKey || apiKey.revokedAt) {
+      return null;
+    }
+    if (apiKey.expiresAt && apiKey.expiresAt.getTime() <= Date.now()) {
+      return null;
+    }
+    return apiKey.tenantId;
+  }
+
+  /**
    * Scope KOSONG/tidak diisi → warisi SELURUH permission role
    * pemiliknya (lihat komentar `createApiKeySchema.scopes`). Scope
    * yang diisi WAJIB subset permission role pemiliknya — melempar

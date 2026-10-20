@@ -87,6 +87,19 @@ Kuota per API key sekarang bergantung pada plan tenant pemilik key
 `Tenant.plan` (bukan `ApiKey.tier` seperti sempat dipertimbangkan di draf awal
 dokumen ini) — alasan dan angka lengkapnya di `docs/rate-limit-tiers.md`.
 
+## Tenant dari API key (R23)
+
+API key terikat ke satu tenant (`ApiKey.tenantId`). Request ber-API key TIDAK wajib mengirim `X-Tenant-ID`: kalau header
+tidak ada, `tenantMiddleware` memakai tenant milik key (lookup hash key, lalu tenant berdasarkan id) dan membuka transaksi
+RLS seperti pada jalur header. Aturannya:
+
+- Header `X-Tenant-ID` yang dikirim selalu menang, dan tetap harus cocok dengan tenant key (S1, kalau tidak 403).
+- Key yang tidak dikenal, dicabut, kedaluwarsa, atau tidak punya tenant tidak mendapat konteks tenant. Penolakan
+  resminya (401) tetap dari `authMiddleware`.
+- Tenant SUSPENDED ditolak 403 sedini mungkin (konsisten dengan T3).
+- Biaya: satu lookup key dan satu query tenant tambahan per request ber-API key tanpa header. Lookup tenant tidak
+  di-cache supaya suspend langsung berlaku; kalau terbukti jadi bottleneck, cache dengan TTL pendek adalah opsi lanjutan.
+
 ## Yang belum tercakup (scope sadar)
 
 - Tidak ada endpoint terpisah `/partner/v1/*` — API key tetap

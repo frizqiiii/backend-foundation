@@ -210,4 +210,30 @@ describe('TenantService', () => {
       await expect(tenantService.isActiveById('hilang')).resolves.toBe(false);
     });
   });
+  describe('resolveActiveTenantById (R23 — tenant dari API key tanpa header)', () => {
+    it('mengembalikan tenant kalau ditemukan dan ACTIVE', async () => {
+      tenantRepository.findById.mockResolvedValue(activeTenant);
+
+      await expect(tenantService.resolveActiveTenantById('tenant-1')).resolves.toEqual(
+        activeTenant
+      );
+      expect(tenantRepository.findById).toHaveBeenCalledWith('tenant-1');
+    });
+
+    it('melempar ForbiddenError kalau tenant SUSPENDED', async () => {
+      tenantRepository.findById.mockResolvedValue({ ...activeTenant, status: 'SUSPENDED' });
+
+      await expect(tenantService.resolveActiveTenantById('tenant-1')).rejects.toThrow(
+        ForbiddenError
+      );
+    });
+
+    it('melempar ForbiddenError (bukan NotFound) kalau tenant tidak ada, dengan pesan yang sama seperti jalur API key T3', async () => {
+      tenantRepository.findById.mockResolvedValue(null);
+
+      await expect(tenantService.resolveActiveTenantById('hilang')).rejects.toThrow(
+        'Tenant pemilik API key ini tidak ditemukan atau sedang tidak aktif'
+      );
+    });
+  });
 });

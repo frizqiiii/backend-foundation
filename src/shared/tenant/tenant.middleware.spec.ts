@@ -3,6 +3,8 @@ import { getTenantContext } from './tenant-context';
 import { ForbiddenError } from '../utils/http-error';
 
 const resolveActiveTenantBySlugMock = jest.fn();
+const resolveActiveTenantByIdMock = jest.fn();
+const findTenantIdByRawKeyMock = jest.fn();
 
 /**
  * Fase 4 (RLS): `tenantMiddleware` sekarang membungkus SISA SIKLUS
@@ -33,7 +35,18 @@ jest.mock('../config/database', () => ({
 jest.mock('../../modules/tenants/tenant.service', () => ({
   TenantService: jest.fn().mockImplementation(() => ({
     resolveActiveTenantBySlug: resolveActiveTenantBySlugMock,
+    resolveActiveTenantById: resolveActiveTenantByIdMock,
   })),
+}));
+
+jest.mock('../../modules/api-keys/api-key.service', () => ({
+  ApiKeyService: jest.fn().mockImplementation(() => ({
+    findTenantIdByRawKey: findTenantIdByRawKeyMock,
+  })),
+}));
+
+jest.mock('../../modules/api-keys/api-key.repository', () => ({
+  ApiKeyRepository: jest.fn(),
 }));
 
 jest.mock('../../modules/tenants/tenant.repository', () => ({
@@ -65,6 +78,10 @@ function createMockRes(): Response & { emitFinish: () => void } {
 }
 
 describe('tenantMiddleware', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   it('melanjutkan request TANPA tenant context kalau tidak ada header X-Tenant-ID (backward compatible)', async () => {
     const req = createMockReq();
     const next = jest.fn() as NextFunction;
@@ -120,5 +137,94 @@ describe('tenantMiddleware', () => {
     await tenantMiddleware(req, {} as Response, next);
 
     expect(next).toHaveBeenCalledWith(expect.any(ForbiddenError));
+  });
+  describe('R23 — tenant dari API key ketika header X-Tenant-ID tidak dikirim', () => {
+    const acmeTenant = { id: 'tenant-acme', slug: 'acme', status: 'ACTIVE', plan: 'PRO' };
+
+    /** Menjalankan middleware sampai selesai dan mengembalikan context yang terlihat oleh `next()`. */
+    async function run(
+      headers: Record<string, string>
+    ): Promise<{ next: jest.Mock; context: unknown }> {
+      const res = createMockRes();
+      let context: unknown;
+      const next = jest.fn(() => {
+        context = getTenantContext();
+        setImmediate(() => res.emitFinish());
+      });
+      await tenantMiddleware(createMockReq(headers), res, next as unknown as NextFunction);
+      return { next, context };
+    }
+
+    it('memakai tenant milik API key yang valid (konteks tenant + transaksi RLS terisi)', async () => {
+      findTenantIdByRawKeyMock.mockResolvedValue('tenant-acme');
+      resolveActiveTenantByIdMock.mockResolvedValue(acmeTenant);
+
+      const { context } = await run({ authorization: 'Bearer bfk_abc123' });
+
+      expect(findTenantIdByRawKeyMock).toHaveBeenCalledWith('bfk_abc123');
+      expect(resolveActiveTenantByIdMock).toHaveBeenCalledWith('tenant-acme');
+      expect(resolveActiveTenantBySlugMock).not.toHaveBeenCalled();
+      expect(context).toEqual({
+        tenantId: 'tenant-acme',
+        tenantSlug: 'acme',
+        tenantPlan: 'PRO',
+        db: { $executeRaw: expect.any(Function) },
+      });
+    });
+
+    it('header X-Tenant-ID tetap menang: key tidak dilihat sama sekali', async () => {
+      resolveActiveTenantBySlugMock.mockResolvedValue({
+        ...acmeTenant,
+        id: 'tenant-1',
+        slug: 'default',
+      });
+
+      const { context } = await run({
+        'x-tenant-id': 'default',
+        authorization: 'Bearer bfk_abc123',
+      });
+
+      expect(findTenantIdByRawKeyMock).not.toHaveBeenCalled();
+      expect(resolveActiveTenantByIdMock).not.toHaveBeenCalled();
+      expect(context).toMatchObject({ tenantId: 'tenant-1', tenantSlug: 'default' });
+    });
+
+    it('tanpa konteks tenant untuk key yang tidak dikenal/dicabut/kedaluwarsa atau tanpa tenant', async () => {
+      findTenantIdByRawKeyMock.mockResolvedValue(null);
+
+      const { next, context } = await run({ authorization: 'Bearer bfk_abc123' });
+
+      expect(next).toHaveBeenCalledWith();
+      expect(resolveActiveTenantByIdMock).not.toHaveBeenCalled();
+      expect(context).toEqual({ tenantId: null, tenantSlug: null, db: null });
+    });
+
+    it.each([
+      ['token JWT (bukan API key)', 'Bearer eyJhbGciOi.payload.sig'],
+      ['skema selain Bearer', 'Basic bfk_abc123'],
+      ['header kosong', ''],
+    ])('tidak mencari key sama sekali untuk %s', async (_label, authorization) => {
+      const { context } = await run({ authorization });
+
+      expect(findTenantIdByRawKeyMock).not.toHaveBeenCalled();
+      expect(context).toEqual({ tenantId: null, tenantSlug: null, db: null });
+    });
+
+    it('menolak 403 (next(error), tanpa transaksi) kalau tenant milik key sedang tidak aktif', async () => {
+      findTenantIdByRawKeyMock.mockResolvedValue('tenant-acme');
+      resolveActiveTenantByIdMock.mockRejectedValue(
+        new ForbiddenError('Tenant pemilik API key ini tidak ditemukan atau sedang tidak aktif')
+      );
+      const next = jest.fn() as NextFunction;
+
+      await tenantMiddleware(
+        createMockReq({ authorization: 'Bearer bfk_abc123' }),
+        {} as Response,
+        next
+      );
+
+      expect(next).toHaveBeenCalledWith(expect.any(ForbiddenError));
+      expect(next).toHaveBeenCalledTimes(1);
+    });
   });
 });

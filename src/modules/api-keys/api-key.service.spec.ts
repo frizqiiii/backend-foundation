@@ -159,6 +159,47 @@ describe('ApiKeyService', () => {
     });
   });
 
+  describe('findTenantIdByRawKey (R23)', () => {
+    it('mengembalikan tenantId key yang valid TANPA memperbarui lastUsedAt', async () => {
+      apiKeyRepository.findByHash.mockResolvedValue({ ...storedApiKey, tenantId: 'tenant-acme' });
+
+      await expect(apiKeyService.findTenantIdByRawKey('bfk_x')).resolves.toBe('tenant-acme');
+      expect(apiKeyRepository.touchLastUsed).not.toHaveBeenCalled();
+    });
+
+    it('mengembalikan null untuk key tanpa tenant', async () => {
+      apiKeyRepository.findByHash.mockResolvedValue({ ...storedApiKey, tenantId: null });
+
+      await expect(apiKeyService.findTenantIdByRawKey('bfk_x')).resolves.toBeNull();
+    });
+
+    it('mengembalikan null (tidak melempar) untuk key yang tidak dikenal', async () => {
+      apiKeyRepository.findByHash.mockResolvedValue(null);
+
+      await expect(apiKeyService.findTenantIdByRawKey('bfk_unknown')).resolves.toBeNull();
+    });
+
+    it('mengembalikan null untuk key yang sudah dicabut, walau key itu punya tenant', async () => {
+      apiKeyRepository.findByHash.mockResolvedValue({
+        ...storedApiKey,
+        tenantId: 'tenant-acme',
+        revokedAt: new Date(),
+      });
+
+      await expect(apiKeyService.findTenantIdByRawKey('bfk_x')).resolves.toBeNull();
+    });
+
+    it('mengembalikan null untuk key yang sudah kedaluwarsa, walau key itu punya tenant', async () => {
+      apiKeyRepository.findByHash.mockResolvedValue({
+        ...storedApiKey,
+        tenantId: 'tenant-acme',
+        expiresAt: new Date('2020-01-01T00:00:00.000Z'),
+      });
+
+      await expect(apiKeyService.findTenantIdByRawKey('bfk_x')).resolves.toBeNull();
+    });
+  });
+
   describe('revoke', () => {
     it('melempar NotFoundError kalau key tidak ditemukan/bukan milik user ini', async () => {
       apiKeyRepository.findByIdForUser.mockResolvedValue(null);
