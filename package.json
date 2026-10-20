@@ -21,6 +21,7 @@
     "test:coverage": "jest --coverage",
     "test:e2e": "jest --testPathPattern=\\.e2e\\.spec\\.ts$",
     "test:rls": "jest --config jest.config.rls-e2e.ts",
+    "test:e2e:compose": "node scripts/e2e-compose.mjs",
     "test:mutation": "stryker run",
     "test:contract": "jest --config jest.contract.config.ts",
     "perf:login": "k6 run performance-tests/login-load.js",

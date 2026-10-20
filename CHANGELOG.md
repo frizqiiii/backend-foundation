@@ -14,6 +14,11 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
 ## [Belum dirilis]
 
 ### Ditambahkan
+- **E2E terhadap stack Compose** (`npm run test:e2e:compose`, `scripts/e2e-compose.mjs`): 16 asersi lewat HTTP terhadap
+  database sungguhan di bawah role non-superuser, mengunci hasil probe S1 (header tenant terikat identitas), R15 (produk
+  per tenant), R20b (eventTypes webhook), R22 (tipe export tanpa tenant) dan R23 (API key tanpa header). Berbeda dari
+  `npm run test:rls` yang menguji repository, ini menguji rantai middleware. Dijalankan manual setelah
+  `docker compose up -d`; belum menjadi langkah CI.
 - **Multi-tenancy Row-Level Security** di level database (item 2.1): isolasi tenant
   ditegakkan Postgres, bukan hanya kode aplikasi; ada jalur test terpisah
   (`npm run test:rls`).
