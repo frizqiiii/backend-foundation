@@ -128,6 +128,13 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   `.github/dependabot.yml` (ekosistem `github-actions`) menjaga pin tetap diperbarui lewat PR.
 
 ### Diperbaiki
+- **API key tanpa header `X-Tenant-ID` kini berjalan di tenant milik key-nya** (R23): sebelumnya request ber-API key
+  tanpa header tidak punya konteks tenant, sehingga tabel ber-RLS terlihat kosong (terukur: `GET /api-keys` dengan header
+  `items=5`, tanpa header `items=0`) dan menulis data gagal dengan 500 (`POST /products`). `tenantMiddleware` kini
+  memilih tenant dari `ApiKey.tenantId` ketika header tidak dikirim dan key valid; header yang dikirim tetap menang dan
+  tetap diikat ke key oleh S1 (header tenant lain: 403). Key tidak dikenal, dicabut, kedaluwarsa, atau tanpa tenant tidak
+  mendapat konteks tenant, dan tenant SUSPENDED ditolak 403. Biayanya satu lookup key dan satu query tenant tambahan per
+  request ber-API key tanpa header.
 - **Webhook tidak pernah terkirim** (R20, #63): `WebhookService.trigger()` tidak punya pemanggil di kode produksi
   (terukur: 0 job di antrean `webhook-delivery` setelah membuat/mengupgrade/menghapus produk dan membuat event; kini
   5 job dengan isolasi tenant utuh). Selain itu `trigger` melempar error kalau pencarian endpoint gagal (padahal

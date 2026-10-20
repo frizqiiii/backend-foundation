@@ -12,7 +12,7 @@ import { resolveTenantPlanSafe } from '../tenant/tenant-plan';
 import { isTenantActiveForApiKey } from '../tenant/tenant-status';
 import { getTenantContext } from '../tenant/tenant-context';
 import { assertTenantBinding } from '../tenant/tenant-binding';
-import { API_KEY_JTI_PREFIX } from '../security/api-key-auth';
+import { API_KEY_JTI_PREFIX, API_KEY_PREFIX } from '../security/api-key-auth';
 
 // Instance module-level — sama pola & alasan seperti
 // `shared/tenant/tenant.middleware.ts`: TIDAK diimpor dari
@@ -22,12 +22,8 @@ import { API_KEY_JTI_PREFIX } from '../security/api-key-auth';
 const userRepository = new UserRepository(prisma);
 const apiKeyService = new ApiKeyService(new ApiKeyRepository(prisma));
 
-/** SETIAP API key aplikasi ini diawali `bfk_` (lihat `KEY_PREFIX` di
- * `api-key.service.ts`) — JWT (format `xxx.yyy.zzz`, base64url) TIDAK
- * PERNAH punya prefix ini, jadi pemeriksaan ini 100% tidak ambigu dan
- * tidak mengubah perilaku untuk SATU PUN client yang sudah memakai
- * JWT sebelum Phase 12. */
-const API_KEY_PREFIX = 'bfk_';
+// Prefix `bfk_` (lihat `API_KEY_PREFIX` di `shared/security/api-key-auth.ts`): JWT (format `xxx.yyy.zzz`, base64url)
+// TIDAK PERNAH punya prefix ini, jadi pemeriksaan ini tidak ambigu dan tidak mengubah perilaku client JWT.
 
 /** Unix timestamp (detik) yang jauh di masa depan — dipakai sebagai
  * `exp` placeholder untuk API key TANPA `expiresAt` (key ini valid

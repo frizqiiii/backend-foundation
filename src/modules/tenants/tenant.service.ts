@@ -69,6 +69,22 @@ export class TenantService {
   }
 
   /**
+   * R23 — dipakai `tenantMiddleware` untuk request ber-API key tanpa header `X-Tenant-ID` (hanya `ApiKey.tenantId`
+   * yang diketahui). Melempar `ForbiddenError` untuk tenant yang tidak ada ATAU tidak ACTIVE, dengan pesan yang sama
+   * seperti penolakan API key milik tenant SUSPENDED di `authMiddleware` (T3). Tidak memakai cache: satu query indexed
+   * per request, sehingga suspend langsung berlaku tanpa menunggu TTL dan tidak butuh invalidasi cache baru.
+   */
+  async resolveActiveTenantById(tenantId: string): Promise<Tenant> {
+    const tenant = await this.tenantRepository.findById(tenantId);
+    if (!tenant || tenant.status !== 'ACTIVE') {
+      throw new ForbiddenError(
+        'Tenant pemilik API key ini tidak ditemukan atau sedang tidak aktif'
+      );
+    }
+    return tenant;
+  }
+
+  /**
    * Fase 2 (item 2.11 — rate limit per-tier/plan) — plan tenant
    * berdasarkan `id`, dipakai jalur API key (`authenticateWithApiKey`)
    * yang hanya punya `ApiKey.tenantId`, bukan slug. Di-cache dengan

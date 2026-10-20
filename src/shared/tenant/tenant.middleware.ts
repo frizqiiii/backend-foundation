@@ -1,8 +1,11 @@
 import type { Request, Response, NextFunction } from 'express';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, Tenant } from '@prisma/client';
 import { prisma } from '../config/database';
 import { TenantRepository } from '../../modules/tenants/tenant.repository';
 import { TenantService } from '../../modules/tenants/tenant.service';
+import { ApiKeyRepository } from '../../modules/api-keys/api-key.repository';
+import { ApiKeyService } from '../../modules/api-keys/api-key.service';
+import { API_KEY_PREFIX } from '../security/api-key-auth';
 import { runWithTenantContext } from './tenant-context';
 import { TENANT_HEADER_NAME } from './tenant.constants';
 
@@ -13,6 +16,34 @@ import { TENANT_HEADER_NAME } from './tenant.constants';
 // (`modules/*` boleh bergantung ke `shared/*`, TIDAK sebaliknya).
 const tenantRepository = new TenantRepository(prisma);
 const tenantService = new TenantService(tenantRepository);
+// R23 — hanya untuk MEMILIH tenant dari API key (lihat `resolveTenant`); autentikasi sesungguhnya tetap di `authMiddleware`.
+const apiKeyService = new ApiKeyService(new ApiKeyRepository(prisma));
+
+/** Token API key dari header `Authorization: Bearer bfk_...`, atau `null` kalau header bukan API key. */
+function extractApiKey(authorization: string | undefined): string | null {
+  if (!authorization || !authorization.startsWith('Bearer ')) {
+    return null;
+  }
+  const token = authorization.slice('Bearer '.length).trim();
+  return token.startsWith(API_KEY_PREFIX) ? token : null;
+}
+
+/**
+ * Menentukan tenant request. Header `X-Tenant-ID` selalu menang. Tanpa header, request ber-API key yang valid memakai
+ * tenant milik key-nya (R23); selain itu `null` (tanpa konteks tenant, perilaku lama). `authMiddleware` kemudian tetap
+ * memvalidasi key penuh dan menegakkan pengikatan S1, jadi hasil di sini hanya memilih konteks, bukan memberi akses.
+ */
+async function resolveTenant(req: Request, slug: string | undefined): Promise<Tenant | null> {
+  if (slug) {
+    return tenantService.resolveActiveTenantBySlug(slug);
+  }
+  const rawKey = extractApiKey(req.headers.authorization);
+  if (!rawKey) {
+    return null;
+  }
+  const keyTenantId = await apiKeyService.findTenantIdByRawKey(rawKey);
+  return keyTenantId ? tenantService.resolveActiveTenantById(keyTenantId) : null;
+}
 
 /**
  * Tenant Middleware (Phase 11, diperluas Fase 4 — RLS) — dipasang
@@ -75,17 +106,17 @@ export async function tenantMiddleware(
     const rawHeader = req.headers[TENANT_HEADER_NAME];
     const slug = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
 
-    if (!slug) {
-      runWithTenantContext({ tenantId: null, tenantSlug: null, db: null }, () => next());
-      return;
-    }
-
     // Melempar ForbiddenError kalau slug tidak dikenal/tenant tidak
     // aktif — ditangkap oleh `next(error)` di catch block bawah,
     // diteruskan ke `errorHandler` global seperti error lainnya. Ini
     // terjadi SEBELUM transaksi RLS dibuka, jadi tidak ada transaksi
     // menggantung untuk request yang ditolak di sini.
-    const tenant = await tenantService.resolveActiveTenantBySlug(slug);
+    const tenant = await resolveTenant(req, slug);
+
+    if (!tenant) {
+      runWithTenantContext({ tenantId: null, tenantSlug: null, db: null }, () => next());
+      return;
+    }
 
     await prisma.$transaction(
       async (tx: Prisma.TransactionClient) => {

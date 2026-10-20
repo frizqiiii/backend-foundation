@@ -17,6 +17,12 @@ import type { Request } from 'express';
 export const API_KEY_JTI_PREFIX = 'api-key:';
 
 /**
+ * Prefix token `Authorization: Bearer ...` yang menandai API key (bukan JWT). Satu definisi dibaca `authMiddleware` dan
+ * `tenantMiddleware` supaya keduanya selalu sepakat mana token yang diperlakukan sebagai API key.
+ */
+export const API_KEY_PREFIX = 'bfk_';
+
+/**
  * Fase 2 (temuan T1) — true kalau request ini sudah diautentikasi
  * PENUH lewat API key yang valid dan masih dalam kuota per-key-nya.
  *
