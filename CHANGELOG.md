@@ -60,6 +60,9 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   response API (untuk event hapus hanya `{ id }`). Konstanta di `src/modules/webhooks/webhook.events.ts`.
 
 ### Diubah
+- **Batas coverage dinaikkan mendekati angka nyata** (`jest.config.ts`): statements 90 menjadi 96, branches 84 menjadi 88,
+  functions 86 menjadi 95, lines 90 menjadi 96 (angka nyata 97.89 / 90.42 / 97.31 / 98.16). Batas lama terlalu longgar:
+  cakupan bisa turun sekitar 6 sampai 11 poin tanpa CI merah.
 - Kuota per-tenant dan per-API-key tidak lagi satu angka flat: sekarang bergantung plan
   tenant. Tier `PRO` (default, dan fallback untuk plan tak dikenal) memakai angka flat
   lama, jadi tenant yang sudah ada tidak terpengaruh.

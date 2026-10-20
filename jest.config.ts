@@ -54,12 +54,15 @@ const config: Config = {
     '!src/shared/config/**',
   ],
   coverageDirectory: 'coverage',
+  // Batas = angka nyata (`npm run test:coverage`, 20 Okt 2026: statements 97.89, branches 90.42, functions 97.31,
+  // lines 98.16) dikurangi 1-2 poin. Cukup dekat supaya tes yang hilang terdeteksi CI, cukup longgar supaya satu
+  // perubahan kecil tidak membuat CI merah secara acak. Naikkan lagi hanya kalau angka nyata naik dan stabil.
   coverageThreshold: {
     global: {
-      statements: 90,
-      branches: 84,
-      functions: 86,
-      lines: 90,
+      statements: 96,
+      branches: 88,
+      functions: 95,
+      lines: 96,
     },
   },
   verbose: true,
