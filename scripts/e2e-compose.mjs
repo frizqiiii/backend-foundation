@@ -11,6 +11,7 @@
 // `/auth/*` dibatasi 10 request per 15 menit per IP; skrip ini memakai 1 login, jadi aman dijalankan beberapa kali.
 //
 // Pakai:  npm run test:e2e:compose        (BASE_URL=http://localhost:3000/api/v1 secara default)
+// Menunggu /health sampai E2E_WAIT_SECONDS (default 90) sebelum mulai, supaya aman tepat setelah `up -d`.
 // Keluar dengan kode 1 kalau ada asersi gagal.
 const BASE = process.env.BASE_URL ?? 'http://localhost:3000/api/v1';
 const ORIGIN = new URL(BASE).origin;
@@ -42,11 +43,31 @@ async function api(method, path, { token, tenant, body } = {}) {
 const dataOf = (r) => (r.json && r.json.data) ?? null;
 const ids = (r) => (Array.isArray(dataOf(r)) ? dataOf(r).map((x) => x.id) : []);
 
+// `docker compose up -d` kembali begitu container *dimulai*, bukan saat aplikasi siap (kompilasi + koneksi DB/Redis
+// masih berjalan). Start dingin ditemukan gagal tanpa tunggu ini, jadi poll /health sampai 200 atau batas waktu.
+const WAIT_SECONDS = Number(process.env.E2E_WAIT_SECONDS ?? 90);
+async function waitForHealth() {
+  const deadline = Date.now() + WAIT_SECONDS * 1000;
+  let res = null;
+  let announced = false;
+  for (;;) {
+    res = await fetch(ORIGIN + '/health', { signal: AbortSignal.timeout(3000) }).catch(() => null);
+    if (res?.status === 200 || Date.now() >= deadline) return res;
+    if (!announced) {
+      console.log(`menunggu aplikasi sehat (maks ${WAIT_SECONDS} detik)...`);
+      announced = true;
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+
 const cleanup = [];
 try {
-  const health = await fetch(ORIGIN + '/health').catch(() => null);
+  const health = await waitForHealth();
   check('GET /health', health?.status === 200, `http=${health?.status ?? 'tidak terjangkau'}`);
-  if (health?.status !== 200) throw new Error('aplikasi tidak terjangkau; jalankan `docker compose up -d` dulu');
+  if (health?.status !== 200) {
+    throw new Error(`aplikasi belum sehat setelah ${WAIT_SECONDS} detik; cek \`docker compose ps\` dan \`docker compose logs backend_app\``);
+  }
 
   const login = await api('POST', '/auth/login', { body: ADMIN });
   const jwt = dataOf(login)?.accessToken;
