@@ -98,6 +98,42 @@ jobs:
           path: coverage/
           retention-days: 14
 
+  # E2E terhadap stack Docker Compose sungguhan (scripts/e2e-compose.mjs): menguji rantai middleware multi-tenant
+  # (S1, R15, R20b, R22, R23) lewat HTTP dengan role Postgres NON-superuser, yang tidak terjangkau tes unit maupun
+  # service container di job `test`. Awalnya TIDAK memblokir merge (`continue-on-error`): job ini belum pernah
+  # berjalan di Actions. Jadikan wajib (hapus `continue-on-error`) setelah beberapa run hijau berturut-turut.
+  e2e-compose:
+    name: E2E (Docker Compose stack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Siapkan .env (secret acak, hanya untuk run ini)
+        run: |
+          cp .env.example .env
+          sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -hex 32)|" .env
+          sed -i "s|^ENCRYPTION_KEY=.*|ENCRYPTION_KEY=$(openssl rand -base64 32)|" .env
+      - name: Build dan jalankan stack Compose
+        run: docker compose up -d --build --wait --wait-timeout 300
+      - name: Migrasi dan seed
+        run: |
+          docker compose exec -T backend_app npx prisma migrate deploy
+          docker compose exec -T backend_app npm run db:seed
+      - name: E2E Compose
+        run: npm run test:e2e:compose
+      - name: Status dan log stack (hanya saat gagal)
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --tail=200 backend_app worker_app postgres_db redis
+      - name: Hentikan stack
+        if: always()
+        run: docker compose down -v
+
   dependency-audit:
     name: Dependency Audit
     runs-on: ubuntu-latest
