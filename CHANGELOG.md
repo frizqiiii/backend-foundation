@@ -126,6 +126,10 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
 - **Port database, Redis, dan aplikasi di `docker-compose.yml` (dev) tidak lagi terbuka ke semua interface**: `'5432:5432'`
   memublikasikan ke `0.0.0.0`; kini `127.0.0.1` (terukur: lewat IP LAN ditolak). Docker menambah aturan iptables sendiri
   yang biasanya melewati firewall host.
+- **Grafana di `docker-compose.monitoring.yml` gagal start** (`make mountpoint ... read-only file system`): folder dashboard
+  di-mount ke `/etc/grafana/provisioning/dashboards/json`, yaitu di dalam bind mount `:ro` yang `json/`-nya tidak ada di
+  host. Kini di-mount ke `/etc/grafana/dashboards` dan `dashboards.yml` menunjuk ke sana. Ditemukan saat menjalankan stack
+  monitoring di mesin pengembang; belum dicek apakah dashboard muncul setelah perbaikan.
 - **Port stack monitoring (`docker-compose.monitoring.yml`) tidak lagi terbuka ke semua interface**: Prometheus (9090),
   Grafana (3001), Alertmanager (9093), Jaeger UI (16686) dan penerima OTLP/HTTP (4318) kini hanya di `127.0.0.1`
   (`docker compose config` menunjukkan `host_ip: 127.0.0.1` untuk kelimanya). Sebelumnya `'PORT:PORT'` memublikasikan UI

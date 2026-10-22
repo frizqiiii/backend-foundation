@@ -86,7 +86,10 @@ services:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
-      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards/json:ro
+      # Di LUAR `/etc/grafana/provisioning/dashboards`: mount di dalam bind mount `:ro` (sebelumnya `.../dashboards/json`)
+      # membuat Docker harus membuat mountpoint `json/` di dalam direktori read-only, dan gagal dengan
+      # "make mountpoint ... read-only file system" karena `json/` tidak ada di host, sehingga Grafana tidak pernah start.
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
     networks:
       - backend-network
     depends_on:
