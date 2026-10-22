@@ -130,6 +130,12 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   di-mount ke `/etc/grafana/provisioning/dashboards/json`, yaitu di dalam bind mount `:ro` yang `json/`-nya tidak ada di
   host. Kini di-mount ke `/etc/grafana/dashboards` dan `dashboards.yml` menunjuk ke sana. Ditemukan saat menjalankan stack
   monitoring di mesin pengembang; belum dicek apakah dashboard muncul setelah perbaikan.
+- **Port stack monitoring (`docker-compose.monitoring.yml`) tidak lagi terbuka ke semua interface**: Prometheus (9090),
+  Grafana (3001), Alertmanager (9093), Jaeger UI (16686) dan penerima OTLP/HTTP (4318) kini hanya di `127.0.0.1`
+  (`docker compose config` menunjukkan `host_ip: 127.0.0.1` untuk kelimanya). Sebelumnya `'PORT:PORT'` memublikasikan UI
+  tanpa autentikasi ke seluruh interface. Port host bisa diganti lewat `PROMETHEUS_HOST_PORT`, `GRAFANA_HOST_PORT`,
+  `ALERTMANAGER_HOST_PORT`, `JAEGER_UI_HOST_PORT`, `OTLP_HTTP_HOST_PORT`. Aplikasi di host lain tidak bisa lagi mengirim
+  ke `:4318` secara langsung. Port aplikasi di `docker-compose.prod.yml` (`3000:3000`) tidak diubah di sini.
 - **Advisory dependency**: `@grpc/grpc-js` dan `brace-expansion` (HIGH) diperbaiki lewat update lockfile;
   `GHSA-vfj7-8cjw-p6xm` (`braces`, HIGH) **tidak punya versi perbaikan** (semua versi terdampak) dan hanya dependency
   development, jadi diterima di `scripts/npm-audit-allowlist.json` dengan justifikasi teknis dan tinjau ulang paling
