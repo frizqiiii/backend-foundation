@@ -18,7 +18,7 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   database sungguhan di bawah role non-superuser, mengunci hasil probe S1 (header tenant terikat identitas), R15 (produk
   per tenant), R20b (eventTypes webhook), R22 (tipe export tanpa tenant) dan R23 (API key tanpa header). Berbeda dari
   `npm run test:rls` yang menguji repository, ini menguji rantai middleware. Dijalankan manual setelah
-  `docker compose up -d`; belum menjadi langkah CI. Skrip menunggu `/health` sampai 200 (default 90 detik,
+  `docker compose up -d`, dan sekarang juga job wajib di CI (`e2e-compose`, membangun stack Compose, migrate + seed). Skrip menunggu `/health` sampai 200 (default 90 detik,
   `E2E_WAIT_SECONDS`) sebelum mulai: tanpa itu, dijalankan tepat setelah `down` + `up -d` ia gagal "tidak terjangkau"
   karena aplikasi masih start.
 - **Multi-tenancy Row-Level Security** di level database (item 2.1): isolasi tenant
