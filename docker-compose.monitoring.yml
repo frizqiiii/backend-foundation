@@ -51,8 +51,12 @@ services:
       # lewat remote-write ke storage jangka panjang, bukan menaikkan
       # retensi lokal tanpa batas).
       - '--storage.tsdb.retention.time=15d'
+    # Hanya `127.0.0.1`: `'PORT:PORT'` memublikasikan ke SEMUA interface host, dan Docker menambahkan aturan
+    # iptables sendiri yang melewati firewall `INPUT` host (ufw/nftables). UI ini tidak punya autentikasi
+    # (Prometheus, Alertmanager, Jaeger) atau hanya kredensial admin bawaan (Grafana). Akses dari luar host lewat
+    # reverse proxy ber-autentikasi atau SSH tunnel. Port host bisa diganti lewat variabel di `.env`.
     ports:
-      - '9090:9090'
+      - '127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090'
     networks:
       - backend-network
     healthcheck:
@@ -64,10 +68,11 @@ services:
   grafana:
     image: grafana/grafana:11.3.1
     restart: unless-stopped
+    # Hanya `127.0.0.1` — lihat catatan di `prometheus`.
     ports:
       # 3001, BUKAN 3000 — port 3000 sudah dipakai `backend_app` di
       # stack utama; keduanya berjalan bersamaan di host yang sama.
-      - '3001:3000'
+      - '127.0.0.1:${GRAFANA_HOST_PORT:-3001}:3000'
     environment:
       # Kredensial admin awal — GANTI lewat `.env` di production
       # (`GF_SECURITY_ADMIN_PASSWORD=...`), jangan biarkan default ini
@@ -163,8 +168,9 @@ services:
       - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     command:
       - '--config.file=/etc/alertmanager/alertmanager.yml'
+    # Hanya `127.0.0.1` — lihat catatan di `prometheus`.
     ports:
-      - '9093:9093'
+      - '127.0.0.1:${ALERTMANAGER_HOST_PORT:-9093}:9093'
     networks:
       - backend-network
 
@@ -185,8 +191,10 @@ services:
     restart: unless-stopped
     environment:
       COLLECTOR_OTLP_ENABLED: 'true'
+    # Hanya `127.0.0.1` — lihat catatan di `prometheus`. Aplikasi di host yang SAMA (mis. PM2) tetap bisa mengirim
+    # ke `localhost:4318`; aplikasi di host LAIN tidak bisa lagi dan butuh jalur sendiri.
     ports:
-      - '16686:16686' # Jaeger UI
-      - '4318:4318' # OTLP/HTTP receiver
+      - '127.0.0.1:${JAEGER_UI_HOST_PORT:-16686}:16686' # Jaeger UI
+      - '127.0.0.1:${OTLP_HTTP_HOST_PORT:-4318}:4318' # OTLP/HTTP receiver
     networks:
       - backend-network
