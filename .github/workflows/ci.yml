@@ -100,13 +100,12 @@ jobs:
 
   # E2E terhadap stack Docker Compose sungguhan (scripts/e2e-compose.mjs): menguji rantai middleware multi-tenant
   # (S1, R15, R20b, R22, R23) lewat HTTP dengan role Postgres NON-superuser, yang tidak terjangkau tes unit maupun
-  # service container di job `test`. Awalnya TIDAK memblokir merge (`continue-on-error`): job ini belum pernah
-  # berjalan di Actions. Jadikan wajib (hapus `continue-on-error`) setelah beberapa run hijau berturut-turut.
+  # service container di job `test`. Wajib lulus: sempat berjalan tanpa memblokir (`continue-on-error`) sampai
+  # terbukti stabil, enam run berturut-turut di `main` hijau (c749c78 sampai e9ae732).
   e2e-compose:
     name: E2E (Docker Compose stack)
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
