@@ -126,6 +126,10 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
 - **Port database, Redis, dan aplikasi di `docker-compose.yml` (dev) tidak lagi terbuka ke semua interface**: `'5432:5432'`
   memublikasikan ke `0.0.0.0`; kini `127.0.0.1` (terukur: lewat IP LAN ditolak). Docker menambah aturan iptables sendiri
   yang biasanya melewati firewall host.
+- **Grafana di `docker-compose.monitoring.yml` gagal start** (`make mountpoint ... read-only file system`): folder dashboard
+  di-mount ke `/etc/grafana/provisioning/dashboards/json`, yaitu di dalam bind mount `:ro` yang `json/`-nya tidak ada di
+  host. Kini di-mount ke `/etc/grafana/dashboards` dan `dashboards.yml` menunjuk ke sana. Ditemukan saat menjalankan stack
+  monitoring di mesin pengembang; belum dicek apakah dashboard muncul setelah perbaikan.
 - **Advisory dependency**: `@grpc/grpc-js` dan `brace-expansion` (HIGH) diperbaiki lewat update lockfile;
   `GHSA-vfj7-8cjw-p6xm` (`braces`, HIGH) **tidak punya versi perbaikan** (semua versi terdampak) dan hanya dependency
   development, jadi diterima di `scripts/npm-audit-allowlist.json` dengan justifikasi teknis dan tinjau ulang paling
