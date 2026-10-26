@@ -82,7 +82,9 @@ satu down.
 Seluruh service production (`docker-compose.prod.yml`) berbagi SATU
 Docker network (`backend-network`) — Postgres/Redis TIDAK expose port
 ke luar network ini (`ports:` hanya didefinisikan untuk service yang
-memang perlu diakses dari luar, mis. API di port 3000). Monitoring
+memang perlu diakses dari luar host, mis. API di port 3000 yang diikat
+ke `127.0.0.1` supaya hanya reverse proxy di host yang sama (nginx, lihat
+`deploy/nginx/`) yang bisa menjangkaunya). Monitoring
 stack (`docker-compose.monitoring.yml`) bergabung ke network yang SAMA
 lewat `external: true` supaya Prometheus bisa scrape `/metrics`
 aplikasi tanpa expose port aplikasi lebih luas dari yang perlu.
