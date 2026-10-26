@@ -146,6 +146,12 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
 - **Semua action di workflow di-pin ke SHA commit penuh** (temuan T12), termasuk `appleboy/ssh-action` yang
   memegang secret SSH VPS. Penjaga `workflow-pinning.spec.ts` gagal di PR kalau ada action tidak ber-pin, dan
   `.github/dependabot.yml` (ekosistem `github-actions`) menjaga pin tetap diperbarui lewat PR.
+- **Port aplikasi di `docker-compose.prod.yml` kini diikat ke `127.0.0.1`** (sebelumnya `3000:3000`, yaitu semua
+  interface): klien bisa menjangkau aplikasi langsung dan melewati nginx (TLS, HSTS, dan rate limit di
+  tingkat proxy). Semua konsumen di repo (`deploy/nginx/`, `deploy.sh`, `deploy-blue-green.sh`) sudah memakai
+  `127.0.0.1:3000`, jadi tidak ada yang putus. Postgres dan Redis memang tidak memublikasikan port. Konfigurasi
+  baru tervalidasi lewat `docker compose config` (`host_ip: 127.0.0.1`); stack prod BELUM dijalankan, jadi bind
+  runtime belum diuji.
 
 ### Diperbaiki
 - **API key tanpa header `X-Tenant-ID` kini berjalan di tenant milik key-nya** (R23): sebelumnya request ber-API key
