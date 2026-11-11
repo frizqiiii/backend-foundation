@@ -140,6 +140,10 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   `GHSA-vfj7-8cjw-p6xm` (`braces`, HIGH) **tidak punya versi perbaikan** (semua versi terdampak) dan hanya dependency
   development, jadi diterima di `scripts/npm-audit-allowlist.json` dengan justifikasi teknis dan tinjau ulang paling
   lambat 2027-04-01.
+- **Advisory `zod` GHSA-mrhx-c7xc-m3w5 (HIGH, kehabisan memori pada koleksi besar) diterima di allowlist** dengan justifikasi
+  teknis: perbaikan upstream hanya di zod 4.6.7 (lompatan mayor dari 3.25.76 yang dipakai), dan dampaknya dibatasi oleh
+  batas body `express.json()` 100 KB (probe 27 Okt 2026: 50.000 elemen = ~14,5 MB heap, 69 ms). Tinjau ulang paling
+  lambat 2027-02-01. Pengerasan tambahan (`.max()` pada array `scopes`) direncanakan terpisah.
 - **`aquasecurity/trivy-action` di-pin ke SHA commit penuh** (temuan T10), bukan `@master`: ref yang bisa
   berubah pada scanner keamanan adalah risiko rantai pasok (insiden 2026-03-19, tag action di-force-push ke
   malware). Lihat `docs/sbom-and-signing.md`.
