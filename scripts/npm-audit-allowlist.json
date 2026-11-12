@@ -22,5 +22,13 @@
     "reason": "braces@3.0.3 HANYA terpasang sebagai dependency DEVELOPMENT transitive (lint-staged -> micromatch -> braces, dan ts-node-dev -> chokidar@3 -> braces); `npm ls braces --omit=dev` kosong dan Dockerfile stage prod-deps memakai `npm ci --omit=dev`, jadi paket ini TIDAK ada di image production maupun kode aplikasi (tidak ada import braces/micromatch di src/, prisma/, scripts/). Kerentanannya (rekursi tak terbatas pada pola brace bersarang sangat dalam) hanya bisa dipicu kalau penyerang dapat menyuplai PATTERN glob ke braces; di sini pola hanya berasal dari konfigurasi repo (lint-staged di package.json) dan argumen watch ts-node-dev yang ditulis developer, bukan input pengguna. Fix upstream TIDAK ADA: rentang rentan `<=3.0.3` mencakup SEMUA versi braces yang dipublikasikan (latest = 3.0.3). Satu-satunya jalur yang disarankan `npm audit` (lint-staged 17.6.0, semver-major) tidak cukup dan merusak: ia mensyaratkan Node >=22.22.1 sedangkan CI dan Docker memakai Node 20, dan jalur ts-node-dev -> chokidar@3 -> braces tetap ada (ts-node-dev 2.0.0 adalah rilis terbaru). Tinjau ulang kalau braces merilis versi perbaikan, atau CI/Docker pindah ke Node >=22.22.1 sehingga lint-staged 17 (picomatch) dan pengganti ts-node-dev bisa dipakai.",
     "reviewBy": "2027-04-01",
     "addedAt": "2026-10-03"
+  },
+  {
+    "id": "GHSA-mrhx-c7xc-m3w5",
+    "package": "zod",
+    "title": "Zod can exhaust memory while validating oversized constrained collections",
+    "reason": "Aplikasi memakai zod 3.25.76 (dependency langsung `^3.23.8`, semua skema validasi request ada di src/*/*.dto.ts); rentang rentan `<4.6.6` dan satu-satunya perbaikan upstream adalah zod 4.6.7, yaitu lompatan versi mayor dengan perubahan API sehingga tidak bisa dipasang tanpa migrasi seluruh skema (di luar lingkup PR dependensi). Dampak di sini dibatasi oleh batas ukuran body: `app.use(express.json())` (src/app.ts, tanpa opsi) memakai batas bawaan Express 100 KB, dan tidak ada route lain yang menaikkannya. Probe terukur 27 Okt 2026 di mesin pengembang: body 100 KB berisi 50.000 elemen array membuat zod 3.25.76 mengumpulkan satu issue per elemen yang gagal, memakai ~14,5 MB heap dan 69 ms, jauh dari kehabisan memori. Satu-satunya array tak terbatas jumlah elemennya di skema request adalah `scopes` di `createApiKeySchema` (src/modules/api-keys/api-key.dto.ts), dan route itu butuh autentikasi serta kena rate limit. Tinjau ulang kalau batas body dinaikkan, ada route unggah/body besar yang divalidasi zod, atau aplikasi bermigrasi ke zod 4. Menambahkan `.max()` pada array tersebut adalah pengerasan tambahan yang direncanakan terpisah.",
+    "reviewBy": "2027-02-01",
+    "addedAt": "2026-11-11"
   }
 ]
