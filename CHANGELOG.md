@@ -158,6 +158,15 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   runtime belum diuji.
 
 ### Diperbaiki
+- **Respons API kini baru dikirim setelah transaksi request ter-COMMIT** (temuan R24): `tenantMiddleware`
+  mengirim respons begitu handler selesai, padahal transaksi baru di-COMMIT sesudahnya. Klien yang menerima `201`
+  lalu langsung memakai hasilnya lewat koneksi database lain (mis. API key yang baru dibuat) bisa mendahului commit
+  dan mendapat `401`/data kosong; di CI ini muncul sebagai kegagalan acak asersi E2E R23. Terbukti dengan eksperimen:
+  `commit_delay` Postgres 50 ms membuat 20 dari 30 pemakaian pertama key mendapat 401 (semuanya valid setelah
+  41-148 ms); tanpa perlambatan 0 dari 100. Kini byte respons ditahan sampai COMMIT selesai; kalau COMMIT gagal klien
+  menerima error, bukan sukses palsu. Respons yang headernya sudah terkirim (streaming) tidak ditahan. Biaya: satu
+  round-trip COMMIT (milidetik) pada setiap request bertenant. Job yang di-enqueue di tengah request tetap memakai
+  `runInTenantTransaction` (R19).
 - **API key tanpa header `X-Tenant-ID` kini berjalan di tenant milik key-nya** (R23): sebelumnya request ber-API key
   tanpa header tidak punya konteks tenant, sehingga tabel ber-RLS terlihat kosong (terukur: `GET /api-keys` dengan header
   `items=5`, tanpa header `items=0`) dan menulis data gagal dengan 500 (`POST /products`). `tenantMiddleware` kini
