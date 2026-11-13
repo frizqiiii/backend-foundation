@@ -48,8 +48,22 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx prisma generate
+      - name: Info runner (CPU, memori, disk, OS)
+        # Diagnostik: run penuh gagal dua kali berturut-turut di menit ke-8 sampai 12 dengan child process Stryker
+        # `SIGKILL` ("The operation was canceled."), padahal kode dan lockfile identik dengan run yang sukses.
+        # Angka ini membantu memastikan apakah itu tekanan memori/CPU atau perbedaan image runner.
+        run: |
+          nproc
+          free -m
+          df -h / | tail -2
+          head -2 /etc/os-release
       - name: Stryker (full run)
         run: npx stryker run
+      - name: Diagnosa OOM (hanya saat gagal)
+        if: failure()
+        run: |
+          free -m
+          sudo dmesg 2>/dev/null | grep -i -E "out of memory|oom-kill|killed process" | tail -20 || true
       - name: Ringkasan hasil
         # Tetap dijalankan walau Stryker gagal (mis. skor di bawah batas)
         # supaya angka & survivors tetap terlihat di halaman run.
