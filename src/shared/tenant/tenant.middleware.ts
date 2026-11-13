@@ -45,6 +45,75 @@ async function resolveTenant(req: Request, slug: string | undefined): Promise<Te
   return keyTenantId ? tenantService.resolveActiveTenantById(keyTenantId) : null;
 }
 
+type ResponseEnd = (...args: unknown[]) => Response;
+
+/** Kendali atas respons yang ditahan sampai transaksi request ter-COMMIT (lihat `holdResponseUntilCommit`). */
+interface ResponseHold {
+  /** Resolve begitu handler memanggil `res.end` (respons siap) atau koneksi tertutup; reject kalau `res` error. */
+  ready: Promise<void>;
+  /** Mengirim respons yang ditahan. Dipanggil SETELAH commit berhasil. */
+  release: () => void;
+  /** Membuang respons yang ditahan dan mengembalikan `res.end` asli. Dipanggil kalau commit GAGAL. */
+  discard: () => void;
+}
+
+/**
+ * Menahan BYTE respons sampai transaksi request ter-COMMIT.
+ *
+ * KENAPA: Express mengirim respons begitu handler memanggil `res.json`/`res.send` (-> `res.end`), padahal transaksi
+ * request (lihat `tenantMiddleware`) baru di-COMMIT sesudahnya. Klien yang menerima `201` dan langsung memakai hasilnya
+ * lewat koneksi database lain (mis. API key yang baru dibuat dipakai di request berikutnya) bisa mendahului COMMIT —
+ * barisnya belum terlihat, hasilnya `401`/data kosong. Terbukti dengan eksperimen: `commit_delay` Postgres diperlambat
+ * 50 ms -> 20 dari 30 pemakaian pertama key mendapat 401 (semuanya valid setelah 41-148 ms); tanpa perlambatan 0 dari 100.
+ *
+ * CARA: `res.end` dibungkus. Panggilan pertama hanya menyimpan argumennya dan menandai respons siap (status, header,
+ * dan body sudah diisi Express; belum ada byte yang keluar). `tenantMiddleware` lalu COMMIT dan baru memanggil `end`
+ * yang asli lewat `release()`. Kalau COMMIT gagal, `discard()` membuang respons itu supaya klien menerima error, bukan
+ * sukses palsu.
+ *
+ * TIDAK ditahan (perilaku lama): respons yang headernya sudah terkirim (`res.headersSent`, mis. streaming lewat
+ * `res.write`/`pipe`), karena byte-nya sudah keluar dan tidak bisa ditarik; serta panggilan `end` kedua.
+ */
+function holdResponseUntilCommit(res: Response): ResponseHold {
+  const originalEnd = res.end as unknown as ResponseEnd;
+  let heldArgs: unknown[] | null = null;
+  let markReady: () => void = () => undefined;
+
+  const ready = new Promise<void>((resolve, reject) => {
+    markReady = resolve;
+    res.once('close', resolve);
+    res.once('error', reject);
+  });
+
+  res.end = function holdingEnd(this: Response, ...args: unknown[]): Response {
+    if (res.headersSent || heldArgs !== null) {
+      const result = originalEnd.apply(this, args);
+      markReady();
+      return result;
+    }
+    heldArgs = args;
+    markReady();
+    return this;
+  } as Response['end'];
+
+  return {
+    ready,
+    release: () => {
+      res.end = originalEnd as unknown as Response['end'];
+      const args = heldArgs;
+      heldArgs = null;
+      // Koneksi yang sudah putus tidak perlu dibalas.
+      if (args !== null && !res.destroyed && !res.writableEnded) {
+        originalEnd.apply(res, args);
+      }
+    },
+    discard: () => {
+      res.end = originalEnd as unknown as Response['end'];
+      heldArgs = null;
+    },
+  };
+}
+
 /**
  * Tenant Middleware (Phase 11, diperluas Fase 4 — RLS) — dipasang
  * GLOBAL di `app.ts`, SEBELUM router bisnis mana pun, supaya tenant
@@ -74,10 +143,18 @@ async function resolveTenant(req: Request, slug: string | undefined): Promise<Te
  * sendiri, auto-commit begitu statement itu selesai). Supaya
  * `app.tenant_id` benar-benar "menempel" ke seluruh query request ini,
  * satu-satunya cara adalah membungkus SISA SIKLUS request (mulai dari
- * titik ini sampai response selesai dikirim) dalam SATU transaksi
- * interaktif Prisma, dan menyimpan transaction client itu (`tx`) di
- * tenant context supaya Repository bisa memakainya lewat
+ * titik ini sampai handler selesai membuat respons) dalam SATU
+ * transaksi interaktif Prisma, dan menyimpan transaction client itu
+ * (`tx`) di tenant context supaya Repository bisa memakainya lewat
  * `getScopedPrisma()`.
+ *
+ * COMMIT SEBELUM RESPONS TERKIRIM: byte respons ditahan sampai
+ * transaksi ter-COMMIT (lihat `holdResponseUntilCommit`), sehingga
+ * klien yang menerima sukses selalu bisa langsung membaca hasil
+ * tulisannya lewat koneksi lain. Yang BELUM tercakup: pekerjaan di
+ * luar request ini yang berjalan SEBELUM commit (mis. job BullMQ yang
+ * di-enqueue di tengah request) — untuk itu tetap pakai
+ * `runInTenantTransaction` (R19).
  *
  * TRADE-OFF YANG DITERIMA (sesuai prinsip roadmap — didokumentasikan,
  * bukan disembunyikan): SETIAP request yang punya tenant aktif
@@ -89,6 +166,9 @@ async function resolveTenant(req: Request, slug: string | undefined): Promise<Te
  * bisa menaikkan tekanan ke connection pool. Mitigasi iterasi
  * pertama: `timeout` digenerouskan jauh di atas default Prisma
  * (30 detik, bukan 5 detik) supaya request wajar tidak keburu gagal.
+ * Menahan respons sampai commit menambah satu round-trip COMMIT
+ * (milidetik) ke latensi yang dilihat klien untuk setiap request
+ * bertenant, termasuk yang hanya membaca.
  * Kalau ini terbukti jadi bottleneck nyata di beban produksi, opsi
  * lanjutan (BELUM dikerjakan, dicatat sebagai follow-up) adalah
  * memindahkan `set_config` ke transaksi MIKRO per-panggilan Repository
@@ -102,6 +182,7 @@ export async function tenantMiddleware(
   res: Response,
   next: NextFunction
 ): Promise<void> {
+  const held: { current: ResponseHold | null } = { current: null };
   try {
     const rawHeader = req.headers[TENANT_HEADER_NAME];
     const slug = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
@@ -129,20 +210,20 @@ export async function tenantMiddleware(
         await runWithTenantContext(
           { tenantId: tenant.id, tenantSlug: tenant.slug, tenantPlan: tenant.plan, db: tx },
           async () => {
+            const hold = holdResponseUntilCommit(res);
+            held.current = hold;
             next();
-            // Menahan transaksi tetap terbuka sampai response BENAR-
-            // BENAR selesai dikirim — `next()` di atas memulai sisa
+            // Menahan transaksi tetap terbuka sampai handler SELESAI
+            // membuat respons — `next()` di atas memulai sisa
             // middleware chain/Controller secara async, tapi tidak
-            // bisa di-`await` langsung (bukan Promise). Menunggu event
-            // `finish`/`close` di response adalah cara Express yang
-            // sudah lazim untuk tahu "request ini benar-benar selesai
-            // diproses", termasuk untuk request yang berakhir di
-            // errorHandler global (tetap memanggil res.json/res.end).
-            await new Promise<void>((resolve, reject) => {
-              res.once('finish', resolve);
-              res.once('close', resolve);
-              res.once('error', reject);
-            });
+            // bisa di-`await` langsung (bukan Promise). Handler
+            // menandai selesai dengan memanggil `res.end` (lewat
+            // `res.json`/`res.send`), termasuk untuk request yang
+            // berakhir di errorHandler global. Byte-nya BELUM keluar
+            // saat ini: baru dikirim `release()` di bawah, setelah
+            // transaksi ter-COMMIT. Koneksi yang putus lebih dulu
+            // (`close`) juga melepas penantian ini.
+            await hold.ready;
           }
         );
       },
@@ -151,7 +232,12 @@ export async function tenantMiddleware(
         timeout: 30_000,
       }
     );
+
+    // Transaksi sudah ter-COMMIT di titik ini: aman mengirim respons.
+    held.current?.release();
   } catch (error) {
+    // Commit/transaksi gagal: buang respons yang mungkin sudah disiapkan supaya klien menerima error, bukan sukses palsu.
+    held.current?.discard();
     next(error);
   }
 }

@@ -54,27 +54,39 @@ jest.mock('../../modules/tenants/tenant.repository', () => ({
 }));
 
 import { tenantMiddleware } from './tenant.middleware';
+import { prisma } from '../config/database';
 
 function createMockReq(headers: Record<string, string> = {}): Request {
   return { headers } as unknown as Request;
 }
 
 /**
- * Fase 4 (RLS): `tenantMiddleware` menunggu event `'finish'`/`'close'`
- * di `res` sebelum transaksi (dan karenanya `tenantMiddleware` sendiri)
- * dianggap selesai — jadi `res` di sini butuh `.once(event, cb)` yang
- * BENAR-BENAR berfungsi (bukan objek kosong `{}` seperti Fase-Fase
- * sebelumnya), plus cara memicu event itu secara manual dari test
- * (mensimulasikan Express benar-benar mengirim response).
+ * `tenantMiddleware` menahan byte respons sampai transaksi ter-COMMIT: ia membungkus `res.end`, menunggu handler memanggilnya
+ * (atau event `'close'`), COMMIT, baru memanggil `end` yang asli. Jadi `res` di sini butuh `end` yang bisa diamati
+ * (`endMock` = `end` ASLI milik Express), `.once(event, cb)` yang BENAR-BENAR berfungsi, dan cara memicu "handler membalas"
+ * (`emitFinish`, memanggil `res.end` TERKINI = pembungkus yang dipasang middleware) atau "koneksi putus" (`emitClose`).
  */
-function createMockRes(): Response & { emitFinish: () => void } {
-  const finishListeners: Array<() => void> = [];
-  return {
+type MockRes = Response & {
+  endMock: jest.Mock;
+  emitFinish: (...args: unknown[]) => void;
+  emitClose: () => void;
+};
+
+function createMockRes(headersSent = false): MockRes {
+  const listeners: Record<string, Array<() => void>> = {};
+  const endMock = jest.fn();
+  const res = {
+    headersSent,
+    end: endMock,
+    endMock,
     once: jest.fn((event: string, cb: () => void) => {
-      if (event === 'finish') finishListeners.push(cb);
+      (listeners[event] ??= []).push(cb);
     }),
-    emitFinish: () => finishListeners.forEach((cb) => cb()),
-  } as unknown as Response & { emitFinish: () => void };
+    emitFinish: (...args: unknown[]) =>
+      (res.end as unknown as (...a: unknown[]) => unknown)(...args),
+    emitClose: () => (listeners.close ?? []).forEach((cb) => cb()),
+  } as unknown as MockRes;
+  return res;
 }
 
 describe('tenantMiddleware', () => {
@@ -105,13 +117,12 @@ describe('tenantMiddleware', () => {
     let observedContext: unknown;
     const next: NextFunction = jest.fn(() => {
       observedContext = getTenantContext();
-      // `next()` di kode asli SELESAI DULU (sinkron), BARU baris
-      // `res.once('finish', resolve)` sempat terdaftar — persis
-      // seperti Express sungguhan (response baru benar-benar selesai
-      // ASYNC, setelah middleware chain melepas call stack saat ini).
-      // Kalau `emitFinish()` dipanggil sinkron di sini, listener-nya
-      // belum sempat terdaftar sama sekali -> promise menggantung
-      // selamanya -> test timeout.
+      // `next()` di kode asli SELESAI DULU (sinkron), BARU pembungkus
+      // `res.end` dan penantian `hold.ready` sempat terpasang — persis
+      // seperti Express sungguhan (handler membalas ASYNC, setelah
+      // middleware chain melepas call stack saat ini). Kalau
+      // `emitFinish()` dipanggil sinkron di sini, tidak ada yang
+      // menandai respons siap -> promise menggantung -> test timeout.
       setImmediate(() => res.emitFinish());
     });
 
@@ -225,6 +236,117 @@ describe('tenantMiddleware', () => {
 
       expect(next).toHaveBeenCalledWith(expect.any(ForbiddenError));
       expect(next).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('respons ditahan sampai transaksi ter-COMMIT', () => {
+    const tenant = { id: 'tenant-1', slug: 'acme', status: 'ACTIVE', plan: 'PRO' };
+    const transactionMock = prisma.$transaction as unknown as jest.Mock;
+    type TxFn = (tx: unknown) => Promise<unknown>;
+    const fakeTx = () => ({ $executeRaw: jest.fn(() => Promise.resolve()) });
+
+    /** `$transaction` palsu yang COMMIT-nya baru selesai setelah `release()` dipanggil (mensimulasikan commit lambat). */
+    function slowCommit(events: string[]): { release: () => void } {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      transactionMock.mockImplementationOnce(async (fn: TxFn) => {
+        const result = await fn(fakeTx());
+        await gate;
+        events.push('commit');
+        return result;
+      });
+      return { release };
+    }
+
+    const reqAcme = () => createMockReq({ 'x-tenant-id': 'acme' });
+    const nextThen = (action: () => void) =>
+      jest.fn(() => {
+        setImmediate(action);
+      }) as unknown as NextFunction & jest.Mock;
+
+    beforeEach(() => {
+      resolveActiveTenantBySlugMock.mockResolvedValue(tenant);
+    });
+
+    it('TIDAK mengirim byte respons sebelum COMMIT selesai, lalu mengirim argumen asli SETELAH commit', async () => {
+      const events: string[] = [];
+      const commit = slowCommit(events);
+      const res = createMockRes();
+      res.endMock.mockImplementation(() => events.push('end'));
+      const next = nextThen(() => res.emitFinish('badan', 'utf8'));
+
+      const done = tenantMiddleware(reqAcme(), res, next);
+      // Handler sudah memanggil res.end, tetapi COMMIT masih tertahan.
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(res.endMock).not.toHaveBeenCalled();
+
+      commit.release();
+      await done;
+
+      expect(events).toEqual(['commit', 'end']);
+      expect(res.endMock).toHaveBeenCalledTimes(1);
+      expect(res.endMock).toHaveBeenCalledWith('badan', 'utf8');
+      // `end` asli dikembalikan setelah dilepas.
+      expect(res.end).toBe(res.endMock);
+    });
+
+    it('kalau COMMIT gagal, respons yang ditahan DIBUANG dan error diteruskan ke next(error)', async () => {
+      const commitError = new Error('commit gagal');
+      transactionMock.mockImplementationOnce(async (fn: TxFn) => {
+        await fn(fakeTx());
+        throw commitError;
+      });
+      const res = createMockRes();
+      const next = nextThen(() => res.emitFinish('201 palsu'));
+
+      await tenantMiddleware(reqAcme(), res, next);
+
+      expect(res.endMock).not.toHaveBeenCalled();
+      expect(next).toHaveBeenLastCalledWith(commitError);
+      // errorHandler memakai `res.end` asli untuk membalas error.
+      expect(res.end).toBe(res.endMock);
+    });
+
+    it('respons yang headernya SUDAH terkirim (mis. streaming) tidak ditahan: `end` langsung diteruskan, sebelum commit', async () => {
+      const events: string[] = [];
+      const commit = slowCommit(events);
+      const res = createMockRes(true);
+      res.endMock.mockImplementation(() => events.push('end'));
+      const next = nextThen(() => res.emitFinish('sisa'));
+
+      const done = tenantMiddleware(reqAcme(), res, next);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      // Byte sudah keluar dan tidak bisa ditarik, jadi `end` tidak boleh menunggu commit.
+      expect(res.endMock).toHaveBeenCalledTimes(1);
+      expect(res.endMock).toHaveBeenCalledWith('sisa');
+
+      commit.release();
+      await done;
+
+      expect(events).toEqual(['end', 'commit']);
+    });
+
+    it('koneksi putus sebelum handler membalas: transaksi tetap selesai dan tidak ada `end` yang dikirim', async () => {
+      const res = createMockRes();
+      const next = nextThen(() => res.emitClose());
+
+      await tenantMiddleware(reqAcme(), res, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(res.endMock).not.toHaveBeenCalled();
+    });
+
+    it('request tanpa tenant context tidak menyentuh `res.end` sama sekali', async () => {
+      const res = createMockRes();
+      const next = jest.fn() as NextFunction;
+      const originalEnd = res.end;
+
+      await tenantMiddleware(createMockReq(), res, next);
+
+      expect(res.end).toBe(originalEnd);
+      expect(transactionMock).not.toHaveBeenCalled();
     });
   });
 });
