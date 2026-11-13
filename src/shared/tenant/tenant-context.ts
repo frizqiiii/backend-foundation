@@ -162,7 +162,7 @@ export async function withRlsBypass<T>(
  *
  * Kapan dipakai (alih-alih ikut transaksi request lewat `getScopedPrisma`): hanya untuk kebutuhan yang HARUS terlihat
  * oleh proses LAIN sebelum request selesai. Contoh nyata: baris `ExportJob` dibuat lalu job-nya di-enqueue ke BullMQ.
- * `tenantMiddleware` baru meng-commit transaksi request SETELAH response selesai, padahal worker (proses terpisah) bisa
+ * `tenantMiddleware` baru meng-commit transaksi request SETELAH handler selesai (byte respons pun baru dikirim sesudahnya), padahal worker (proses terpisah) bisa
  * mengambil job itu dalam hitungan milidetik. Tanpa commit mandiri, `markProcessing` di worker tidak menemukan barisnya.
  * Konsekuensinya baris ikut tersimpan walau request kemudian gagal; untuk job yang SUDAH di-enqueue itu memang benar.
  *
