@@ -245,6 +245,12 @@ export const EN_MESSAGES: Readonly<Record<string, string>> = {
   'Token bukan token MFA challenge yang valid': 'Token is not a valid MFA challenge token',
   'Ukuran file melebihi batas maksimal yang diizinkan':
     'File size exceeds the maximum allowed limit',
+  'Body request bukan JSON yang valid': 'Request body is not valid JSON',
+  'Ukuran body request melebihi batas maksimal yang diizinkan':
+    'Request body exceeds the maximum allowed size',
+  'Encoding atau charset body request tidak didukung':
+    'Request body encoding or charset is not supported',
+  'Body request tidak lengkap atau dibatalkan': 'Request body is incomplete or was aborted',
   'Kode otorisasi GitHub tidak valid': 'Invalid GitHub authorization code',
 };
 

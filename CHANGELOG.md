@@ -158,6 +158,12 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   runtime belum diuji.
 
 ### Diperbaiki
+- **JSON rusak dan body terlalu besar kini dijawab 400/413, bukan 500**: error dari body parser Express
+  (`express.json`) bukan `HttpError` kita sehingga jatuh ke cabang 500 generik di `errorHandler` — di luar production
+  bahkan membocorkan `String(err)` mentah ke klien. Kini dipetakan lewat `type` body-parser: `entity.parse.failed` →
+  400, `entity.too.large` → 413, `encoding.unsupported`/`charset.unsupported` → 415, `request.aborted`/
+  `request.size.invalid` → 400, dengan pesan tetap yang diterjemahkan lewat katalog i18n. Error asing yang kebetulan
+  ber-status 4xx tetap 500. Dampak operasional: klien yang salah kirim tidak lagi memicu alarm/laporan error 5xx.
 - **Respons API kini baru dikirim setelah transaksi request ter-COMMIT** (temuan R24): `tenantMiddleware`
   mengirim respons begitu handler selesai, padahal transaksi baru di-COMMIT sesudahnya. Klien yang menerima `201`
   lalu langsung memakai hasilnya lewat koneksi database lain (mis. API key yang baru dibuat) bisa mendahului commit
