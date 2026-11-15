@@ -72,7 +72,7 @@ try {
   const login = await api('POST', '/auth/login', { body: ADMIN });
   const jwt = dataOf(login)?.accessToken;
   if (!jwt) {
-    throw new Error(`login gagal http=${login.status} (429 = batas /auth/*; reset key rate_limit:auth:* di redis)`);
+    throw new Error(`login gagal http=${login.status} (429 = pembatas laju; hapus key rate_limit:* di redis compose)`);
   }
 
   // S1 — header tenant harus milik identitas pemanggil.
