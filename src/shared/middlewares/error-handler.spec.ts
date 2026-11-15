@@ -1,3 +1,6 @@
+import http from 'http';
+import type { AddressInfo } from 'net';
+import express from 'express';
 import type { Request, Response } from 'express';
 import type { ZodError } from 'zod';
 import { z } from 'zod';
@@ -86,6 +89,180 @@ describe('errorHandler', () => {
     expect(res.json).toHaveBeenCalledWith({
       success: false,
       message: expect.stringContaining('Upload gagal:'),
+    });
+  });
+
+  describe('error body parser (express.json) — kesalahan client, bukan 500', () => {
+    function parserError(type: string, status: number): Error {
+      // Bentuk yang sama dengan `http-errors` milik body-parser.
+      return Object.assign(new Error(`pesan internal parser untuk ${type}`), {
+        type,
+        status,
+        statusCode: status,
+        expose: true,
+      });
+    }
+
+    it.each([
+      ['entity.parse.failed', 400, 'Body request bukan JSON yang valid'],
+      ['entity.too.large', 413, 'Ukuran body request melebihi batas maksimal yang diizinkan'],
+      ['encoding.unsupported', 415, 'Encoding atau charset body request tidak didukung'],
+      ['charset.unsupported', 415, 'Encoding atau charset body request tidak didukung'],
+      ['request.aborted', 400, 'Body request tidak lengkap atau dibatalkan'],
+      ['request.size.invalid', 400, 'Body request tidak lengkap atau dibatalkan'],
+    ])('type %s -> %i dengan pesan tetap (bukan err.message parser)', (type, status, message) => {
+      const res = createMockResponse();
+
+      errorHandler(parserError(type, status), req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(status);
+      expect(res.json).toHaveBeenCalledWith({ success: false, message });
+    });
+
+    it('pesan diterjemahkan sesuai Accept-Language, status tidak berubah', () => {
+      const res = createMockResponse();
+      const enReq = {
+        method: 'POST',
+        originalUrl: '/test',
+        headers: { 'accept-language': 'en' },
+      } as unknown as Request;
+
+      errorHandler(parserError('entity.too.large', 413), enReq, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(413);
+      expect(res.json).toHaveBeenCalledWith({
+        success: false,
+        message: 'Request body exceeds the maximum allowed size',
+      });
+    });
+
+    it('error dengan status 4xx tetapi type TIDAK dikenal tetap 500 (tidak diloloskan sebagai salah client)', () => {
+      const res = createMockResponse();
+
+      errorHandler(parserError('type.tak.dikenal', 400), req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+    });
+
+    it('type yang kebetulan nama properti bawaan Object ("constructor") tidak dianggap dikenal', () => {
+      const res = createMockResponse();
+
+      errorHandler(parserError('constructor', 400), req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+    });
+
+    it('nilai error primitif/null tidak membuat handler melempar (tetap 500)', () => {
+      for (const odd of [null, undefined, 'teks', 42]) {
+        const res = createMockResponse();
+
+        errorHandler(odd, req, res, next);
+
+        expect(res.status).toHaveBeenCalledWith(500);
+      }
+    });
+
+    it('type bukan string tidak dianggap dikenal', () => {
+      const res = createMockResponse();
+
+      errorHandler(Object.assign(new Error('x'), { type: 123 }), req, res, next);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+    });
+
+    describe('terintegrasi dengan express.json asli (kontrak `type` body-parser)', () => {
+      let server: http.Server;
+      let port: number;
+
+      beforeAll(async () => {
+        const app = express();
+        app.use(express.json({ limit: '1kb' }));
+        app.post('/echo', (_req, res) => {
+          res.status(200).json({ success: true });
+        });
+        app.use(errorHandler);
+        server = http.createServer(app);
+        await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+        port = (server.address() as AddressInfo).port;
+      });
+
+      afterAll(async () => {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      });
+
+      function post(
+        body: string,
+        headers: Record<string, string> = { 'content-type': 'application/json' }
+      ): Promise<{ status: number; body: unknown }> {
+        return new Promise((resolve, reject) => {
+          const request = http.request(
+            { host: '127.0.0.1', port, path: '/echo', method: 'POST', headers },
+            (response) => {
+              let raw = '';
+              response.on('data', (chunk: Buffer) => (raw += chunk.toString()));
+              response.on('end', () =>
+                resolve({ status: response.statusCode ?? 0, body: JSON.parse(raw) })
+              );
+            }
+          );
+          request.on('error', reject);
+          request.end(body);
+        });
+      }
+
+      it('JSON rusak -> 400', async () => {
+        const result = await post('{bad json');
+
+        expect(result).toEqual({
+          status: 400,
+          body: { success: false, message: 'Body request bukan JSON yang valid' },
+        });
+      });
+
+      it('body melebihi limit -> 413', async () => {
+        const result = await post(JSON.stringify({ x: 'a'.repeat(2000) }));
+
+        expect(result).toEqual({
+          status: 413,
+          body: {
+            success: false,
+            message: 'Ukuran body request melebihi batas maksimal yang diizinkan',
+          },
+        });
+      });
+
+      it('charset tidak didukung -> 415', async () => {
+        const result = await post('{}', { 'content-type': 'application/json; charset=koi8-r' });
+
+        expect(result).toEqual({
+          status: 415,
+          body: {
+            success: false,
+            message: 'Encoding atau charset body request tidak didukung',
+          },
+        });
+      });
+
+      it('Content-Encoding tidak didukung -> 415', async () => {
+        const result = await post('{}', {
+          'content-type': 'application/json',
+          'content-encoding': 'x-desain-tak-dikenal',
+        });
+
+        expect(result).toEqual({
+          status: 415,
+          body: {
+            success: false,
+            message: 'Encoding atau charset body request tidak didukung',
+          },
+        });
+      });
+
+      it('body valid tetap lolos (200)', async () => {
+        const result = await post('{"x":1}');
+
+        expect(result).toEqual({ status: 200, body: { success: true } });
+      });
     });
   });
 

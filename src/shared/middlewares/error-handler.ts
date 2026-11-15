@@ -8,6 +8,46 @@ import { getRequestLocale } from '../i18n/locale';
 import { translateFieldErrors, translateMessage } from '../i18n/translate';
 
 /**
+ * Error dari body parser Express (`express.json`, via `body-parser`) adalah
+ * objek `http-errors`, BUKAN `HttpError` kita: ia membawa `type` yang stabil
+ * (`entity.parse.failed`, `entity.too.large`, ...). Tanpa pemetaan ini JSON
+ * rusak dan body terlalu besar jatuh ke cabang 500 di bawah — padahal murni
+ * kesalahan client (400/413) — dan, di luar production, bocor sebagai
+ * `String(err)`.
+ *
+ * Pemetaan memakai `type` (kontrak body-parser), bukan `instanceof`, dan
+ * SENGAJA hanya mengenali jenis yang tercantum: error lain yang kebetulan
+ * punya `status` 4xx tetap diperlakukan sebagai tak terduga (500), supaya
+ * tidak ada error asing yang diloloskan sebagai "salah client". Pesan
+ * dibuat tetap (bukan `err.message`) agar tidak membocorkan detail parser.
+ */
+const BODY_PARSER_ERRORS: ReadonlyMap<string, { status: number; message: string }> = new Map([
+  ['entity.parse.failed', { status: 400, message: 'Body request bukan JSON yang valid' }],
+  [
+    'entity.too.large',
+    { status: 413, message: 'Ukuran body request melebihi batas maksimal yang diizinkan' },
+  ],
+  [
+    'encoding.unsupported',
+    { status: 415, message: 'Encoding atau charset body request tidak didukung' },
+  ],
+  [
+    'charset.unsupported',
+    { status: 415, message: 'Encoding atau charset body request tidak didukung' },
+  ],
+  ['request.aborted', { status: 400, message: 'Body request tidak lengkap atau dibatalkan' }],
+  ['request.size.invalid', { status: 400, message: 'Body request tidak lengkap atau dibatalkan' }],
+]);
+
+function getBodyParserError(err: unknown): { status: number; message: string } | undefined {
+  if (typeof err !== 'object' || err === null) {
+    return undefined;
+  }
+  const type = (err as { type?: unknown }).type;
+  return typeof type === 'string' ? BODY_PARSER_ERRORS.get(type) : undefined;
+}
+
+/**
  * Global error handler — satu-satunya tempat yang membentuk response
  * error final ke client. Controller/Service cukup `throw`, tidak perlu
  * tahu format response error.
@@ -51,6 +91,15 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
         ? 'Ukuran file melebihi batas maksimal yang diizinkan'
         : `Upload gagal: ${err.message}`;
     res.status(400).json({ success: false, message: translateMessage(message, locale) });
+    return;
+  }
+
+  const bodyParserError = getBodyParserError(err);
+  if (bodyParserError) {
+    res.status(bodyParserError.status).json({
+      success: false,
+      message: translateMessage(bodyParserError.message, locale),
+    });
     return;
   }
 
