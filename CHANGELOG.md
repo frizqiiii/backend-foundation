@@ -158,6 +158,12 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   runtime belum diuji.
 
 ### Diperbaiki
+- **Array `scopes` (API key) dan `eventTypes` (webhook) kini dibatasi ukurannya**: keduanya hanya punya batas bawah,
+  sehingga body 100 KB berisi puluhan ribu elemen lolos sampai validasi Zod, yang mencatat satu isu per elemen gagal
+  (terukur: 50.000 elemen = 50.001 isu, ~32 MB heap, 110 ms untuk satu request). Kini jumlah dibatasi ke jumlah nilai
+  yang valid (`eventTypes`: daftar event; `scopes`: permission terbanyak satu role) dan panjang tiap `scope` ke 64
+  karakter, dengan `.pipe()` agar pemeriksaan elemen dilewati begitu jumlah sudah melebihi batas (hasilnya satu isu,
+  ~12 ms). Penolakan tetap 422 dengan pesan yang diterjemahkan lewat katalog i18n; input yang valid tidak berubah.
 - **JSON rusak dan body terlalu besar kini dijawab 400/413, bukan 500**: error dari body parser Express
   (`express.json`) bukan `HttpError` kita sehingga jatuh ke cabang 500 generik di `errorHandler` — di luar production
   bahkan membocorkan `String(err)` mentah ke klien. Kini dipetakan lewat `type` body-parser: `entity.parse.failed` →

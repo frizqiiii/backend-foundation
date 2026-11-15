@@ -34,6 +34,8 @@ export const EN_MESSAGES: Readonly<Record<string, string>> = {
   'API key berhasil dicabut': 'API key revoked successfully',
   'Daftar API key berhasil diambil': 'API key list retrieved successfully',
   'Nama API key wajib diisi': 'API key name is required',
+  'Jumlah scope melebihi batas yang diizinkan': 'Number of scopes exceeds the allowed limit',
+  'Panjang scope melebihi batas yang diizinkan': 'Scope length exceeds the allowed limit',
   'API key sudah dicabut': 'API key has been revoked',
   'API key sudah kedaluwarsa': 'API key has expired',
   'API key tidak ditemukan': 'API key not found',
@@ -225,6 +227,8 @@ export const EN_MESSAGES: Readonly<Record<string, string>> = {
   'Webhook endpoint berhasil didaftarkan. SIMPAN secret ini sekarang — tidak akan ditampilkan lagi.':
     'Webhook endpoint registered successfully. SAVE this secret now — it will not be shown again.',
   'Minimal satu event type harus dipilih': 'At least one event type must be selected',
+  'Jumlah event type melebihi batas yang diizinkan':
+    'Number of event types exceeds the allowed limit',
   'Event type tidak dikenal. Lihat daftar event type yang didukung di dokumentasi API':
     'Unknown event type. See the API documentation for the supported event types',
   'URL tidak valid': 'Invalid URL',
