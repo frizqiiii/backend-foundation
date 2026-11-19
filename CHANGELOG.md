@@ -149,6 +149,8 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   diperbaiki di versi terpasang (`sdk-node` dan `exporter-prometheus` 0.222.0 >= 0.217.0, `propagator-jaeger` 2.11.0
   >= 2.9.0). Yang tersisa di allowlist hanya `zod` GHSA-mrhx-c7xc-m3w5. Advisory picomatch GHSA-fc5q-39xc-vjpf
   (ditarik 18 Nov 2026) tidak pernah perlu diizinkan.
+- **Alasan entri allowlist `zod` diperbarui:** `scopes` dan `eventTypes` sudah dibatasi `.max()` (#86), bukan lagi
+  "direncanakan terpisah". Tanggal `reviewBy` tetap 2027-02-01.
 - **`aquasecurity/trivy-action` di-pin ke SHA commit penuh** (temuan T10), bukan `@master`: ref yang bisa
   berubah pada scanner keamanan adalah risiko rantai pasok (insiden 2026-03-19, tag action di-force-push ke
   malware). Lihat `docs/sbom-and-signing.md`.
