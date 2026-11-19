@@ -251,3 +251,23 @@ Suite naik ke **161 suite / 1347 test** (+5), nol regresi.
 diasumsikan — masing-masing punya bukti empiris terpisah), 1 diterima sebagai batas
 praktis (boundary presisi floating-point yang tidak terjangkau tanpa rekayasa berlebihan).
 Tidak ada survivor yang dibiarkan tanpa investigasi atau alasan tertulis.
+
+## `redis-shutdown.ts` (4 survivor, semua diperbaiki)
+
+Berkas ini ditambahkan setelah triase Oktober (perbaikan shutdown Redis, #37), jadi baru terlihat di run
+mutation 19 Nov 2026: skor berkas 69,23% (6 killed, 3 timeout, 4 survived). Keempat survivor dibaca langsung
+dari keluaran `clear-text` Stryker yang dijalankan hanya untuk berkas ini
+(`npx stryker run --mutate src/shared/reliability/redis-shutdown.ts --reporters clear-text`).
+
+| Baris | Mutan | Dibunuh oleh tes |
+|---|---|---|
+| 47 | pesan timeout `quit() tidak selesai dalam ...ms` → kosong | "timeout dicatat dengan pesan yang menyebut batas waktunya" |
+| 54 | `{ err: error }` → `{}` | "warning memuat error aslinya dan label koneksi" |
+| 55 | teks warning → kosong | "warning memuat error aslinya dan label koneksi" |
+| 58 | `finally { clearTimeout(timer) }` → `finally {}` | "timer batas waktu dibersihkan (tidak menahan event loop)" |
+
+Alasan keempatnya dianggap celah nyata, bukan mutan setara: warning adalah satu-satunya jejak bahwa sebuah
+koneksi diputus paksa, jadi error aslinya, label koneksi (`cache`/`queue`) dan pesan timeout dibutuhkan untuk
+membedakan "macet" dari "sudah terputus"; dan tanpa `clearTimeout`, setiap `quit()` yang berhasil meninggalkan
+timer yang menahan event loop sampai batas waktunya habis. Tes hanya memeriksa fragmen teks yang fungsional
+(label, angka batas waktu), bukan seluruh kalimat, supaya tidak rapuh terhadap perubahan redaksi.
