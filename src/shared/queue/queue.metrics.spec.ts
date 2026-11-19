@@ -124,6 +124,44 @@ describe('queueJobsGauge.collect()', () => {
     expect(getJobCounts).not.toHaveBeenCalled();
   });
 
+  it('REDIS MATI setelah scrape sukses — seri lama DIHAPUS, bukan dibiarkan basi', async () => {
+    const connection = { status: 'ready' };
+    const getJobCounts = jest
+      .fn()
+      .mockResolvedValue({ waiting: 3, active: 1, delayed: 0, completed: 10, failed: 2 });
+    const { queueJobsGauge } = await loadWithQueues({ email: { getJobCounts } }, connection);
+
+    const before = await queueJobsGauge.get();
+    expect(before.values).toHaveLength(5);
+
+    connection.status = 'reconnecting';
+    const after = await queueJobsGauge.get();
+
+    expect(after.values).toHaveLength(0);
+  });
+
+  it('getJobCounts GAGAL pada scrape berikutnya — seri queue itu dihapus, queue lain tetap', async () => {
+    const counts = { waiting: 3, active: 1, delayed: 0, completed: 10, failed: 2 };
+    const emailGetJobCounts = jest
+      .fn()
+      .mockResolvedValueOnce(counts)
+      .mockRejectedValueOnce(new Error('Redis timeout'));
+    const notificationGetJobCounts = jest.fn().mockResolvedValue(counts);
+    const { queueJobsGauge } = await loadWithQueues(
+      {
+        email: { getJobCounts: emailGetJobCounts },
+        notification: { getJobCounts: notificationGetJobCounts },
+      },
+      { status: 'ready' }
+    );
+
+    await queueJobsGauge.get();
+    const metric = await queueJobsGauge.get();
+
+    expect(metric.values.filter((v) => v.labels.queue === 'email')).toHaveLength(0);
+    expect(metric.values.filter((v) => v.labels.queue === 'notification')).toHaveLength(5);
+  });
+
   it('koneksi "ready" tapi getJobCounts MENGGANTUNG — dianggap gagal setelah METRICS_REDIS_TIMEOUT_MS, queue lain tetap ter-scrape', async () => {
     jest.useFakeTimers();
     try {
@@ -210,6 +248,38 @@ describe('workerHealthGauge.collect()', () => {
     await expect(workerHealthGauge.get()).resolves.toBeDefined();
 
     expect(get).not.toHaveBeenCalled();
+  });
+
+  it('REDIS MATI setelah scrape sukses — seri lama DIHAPUS, bukan dibiarkan basi', async () => {
+    const connection = { get: jest.fn().mockResolvedValue(String(Date.now())), status: 'ready' };
+    const { workerHealthGauge } = await loadWithConnection(connection);
+
+    const before = await workerHealthGauge.get();
+    expect(before.values).toHaveLength(4);
+
+    connection.status = 'reconnecting';
+    const after = await workerHealthGauge.get();
+
+    expect(after.values).toHaveLength(0);
+  });
+
+  it('get() GAGAL pada scrape berikutnya untuk satu worker — seri worker itu dihapus, worker lain tetap', async () => {
+    let failEmail = false;
+    const get = jest
+      .fn()
+      .mockImplementation((key: string) =>
+        key === 'worker:heartbeat:email' && failEmail
+          ? Promise.reject(new Error('Redis timeout'))
+          : Promise.resolve(String(Date.now()))
+      );
+    const { workerHealthGauge } = await loadWithConnection({ get, status: 'ready' });
+
+    await workerHealthGauge.get();
+    failEmail = true;
+    const metric = await workerHealthGauge.get();
+
+    expect(metric.values.find((v) => v.labels.queue === 'email')).toBeUndefined();
+    expect(metric.values.find((v) => v.labels.queue === 'notification')?.value).toBe(1);
   });
 
   it('koneksi "ready" tapi get() MENGGANTUNG — dianggap gagal setelah METRICS_REDIS_TIMEOUT_MS, scrape tetap selesai', async () => {

@@ -33,6 +33,12 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 /**
+ * Status job BullMQ yang diekspor ke `queue_jobs_total`: sumber tunggal untuk `getJobCounts()` dan
+ * untuk menghapus seri saat pembacaan gagal.
+ */
+const JOB_STATUSES = ['waiting', 'active', 'delayed', 'completed', 'failed'] as const;
+
+/**
  * Statistik kedalaman antrian (Phase 10 upgrade — "Queue Statistics").
  * Didaftarkan ke `metricsRegistry` YANG SAMA dengan metric HTTP di
  * `metrics.registry.ts` — sengaja SATU endpoint `/metrics` untuk
@@ -54,6 +60,8 @@ export const queueJobsGauge = new Gauge({
   async collect() {
     if (isRedisConnectionDown(queueConnection)) {
       logger.debug('queueJobsGauge: koneksi Redis tidak siap, kolektor dilewati');
+      // Nilai terakhir tidak boleh terbaca seolah-olah masih benar: hapus semua seri ("tidak diketahui").
+      this.reset();
       return;
     }
 
@@ -76,7 +84,7 @@ export const queueJobsGauge = new Gauge({
 
         try {
           const counts = await withTimeout(
-            queue.getJobCounts('waiting', 'active', 'delayed', 'completed', 'failed'),
+            queue.getJobCounts(...JOB_STATUSES),
             METRICS_REDIS_TIMEOUT_MS
           );
           for (const [status, count] of Object.entries(counts)) {
@@ -86,8 +94,12 @@ export const queueJobsGauge = new Gauge({
           // Redis lambat/down SAAT SCRAPE tidak boleh membuat seluruh
           // endpoint `/metrics` gagal (metric HTTP lain yang tidak
           // terkait queue tetap harus terkirim) — cukup di-log,
-          // gauge queue ini saja yang tertinggal dengan nilai lama.
+          // seri queue ini saja yang dihapus (bukan dibiarkan basi di nilai lama yang terbaca
+          // seolah-olah masih benar); queue lain dan metric HTTP tetap terkirim.
           logger.warn({ err: error, queue: name }, 'queueJobsGauge: gagal mengambil job counts');
+          for (const status of JOB_STATUSES) {
+            this.remove({ queue: name, status });
+          }
         }
       })
     );
@@ -120,6 +132,8 @@ export const workerHealthGauge = new Gauge({
     }
     if (isRedisConnectionDown(queueConnection)) {
       logger.debug('workerHealthGauge: koneksi Redis tidak siap, kolektor dilewati');
+      // Nilai terakhir tidak boleh terbaca seolah-olah worker masih hidup: hapus seri ("tidak diketahui").
+      this.reset();
       return;
     }
     // Ditangkap ke variabel lokal — TypeScript TIDAK menyempitkan
@@ -150,6 +164,7 @@ export const workerHealthGauge = new Gauge({
           this.set({ queue: name }, isAlive ? 1 : 0);
         } catch (error) {
           logger.warn({ err: error, queue: name }, 'workerHealthGauge: gagal membaca heartbeat');
+          this.remove({ queue: name });
         }
       })
     );
