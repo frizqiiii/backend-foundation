@@ -144,6 +144,11 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   teknis: perbaikan upstream hanya di zod 4.6.7 (lompatan mayor dari 3.25.76 yang dipakai), dan dampaknya dibatasi oleh
   batas body `express.json()` 100 KB (probe 27 Okt 2026: 50.000 elemen = ~14,5 MB heap, 69 ms). Tinjau ulang paling
   lambat 2027-02-01. Pengerasan tambahan (`.max()` pada array `scopes`) direncanakan terpisah.
+- **Tiga entri allowlist dihapus karena sudah tidak berlaku.** `braces` GHSA-vfj7-8cjw-p6xm ditarik (withdrawn)
+  di GitHub Advisory Database pada 23 Okt 2026. `@opentelemetry` GHSA-q7rr-3cgh-j5r3 dan GHSA-45rx-2jwx-cxfr sudah
+  diperbaiki di versi terpasang (`sdk-node` dan `exporter-prometheus` 0.222.0 >= 0.217.0, `propagator-jaeger` 2.11.0
+  >= 2.9.0). Yang tersisa di allowlist hanya `zod` GHSA-mrhx-c7xc-m3w5. Advisory picomatch GHSA-fc5q-39xc-vjpf
+  (ditarik 18 Nov 2026) tidak pernah perlu diizinkan.
 - **`aquasecurity/trivy-action` di-pin ke SHA commit penuh** (temuan T10), bukan `@master`: ref yang bisa
   berubah pada scanner keamanan adalah risiko rantai pasok (insiden 2026-03-19, tag action di-force-push ke
   malware). Lihat `docs/sbom-and-signing.md`.
