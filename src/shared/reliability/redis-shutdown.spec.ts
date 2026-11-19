@@ -66,6 +66,47 @@ describe('quietRedisQuit', () => {
     }
   });
 
+  it('warning memuat error aslinya dan label koneksi supaya penyebabnya bisa dilacak di log', async () => {
+    const error = new Error('Connection is closed.');
+    const client = { quit: jest.fn().mockRejectedValue(error), disconnect: jest.fn() };
+
+    await quietRedisQuit('queue', client);
+
+    const [fields, message] = mockedWarn.mock.calls[0];
+    expect(fields).toEqual({ err: error });
+    expect(message).toContain('(queue)');
+  });
+
+  it('timeout dicatat dengan pesan yang menyebut batas waktunya, berbeda dari koneksi putus', async () => {
+    jest.useFakeTimers();
+    try {
+      const client = { quit: jest.fn(() => new Promise<never>(() => {})), disconnect: jest.fn() };
+
+      const done = quietRedisQuit('cache', client, 1500);
+      await jest.advanceTimersByTimeAsync(1500);
+      await done;
+
+      const [fields, message] = mockedWarn.mock.calls[0];
+      expect((fields as { err: Error }).err.message).toContain('1500ms');
+      expect(message).toContain('(cache)');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('quit() berhasil → timer batas waktu dibersihkan (tidak menahan event loop)', async () => {
+    jest.useFakeTimers();
+    try {
+      const client = { quit: jest.fn().mockResolvedValue('OK'), disconnect: jest.fn() };
+
+      await quietRedisQuit('cache', client, 2000);
+
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('timeout default JAUH di bawah SHUTDOWN_TIMEOUT_MS bawaan (10000ms)', () => {
     expect(REDIS_QUIT_TIMEOUT_MS).toBeLessThanOrEqual(5000);
   });
