@@ -36,6 +36,12 @@ queue_jobs_total{queue="email", status="waiting"}
 queue_worker_up{queue="email"} == 0
 ```
 
+> **Seri yang hilang berarti "tidak diketahui".** Saat koneksi Redis aplikasi tidak siap, atau pembacaan
+> Redis gagal/timeout saat scrape, seri `queue_worker_up` dan `queue_jobs_total` (untuk queue yang
+> bersangkutan) DIHAPUS dari `/metrics`, bukan dibiarkan di nilai terakhir. Alert berbasis `== 0` atau
+> `> 0` karena itu tidak menyala selama status tidak diketahui; kondisi Redis mati ditangani alert
+> `RedisDown` (dari `redis_exporter`, tidak bergantung pada aplikasi).
+
 ## Grafana
 
 - Provisioning otomatis: `monitoring/grafana/provisioning/` (datasource

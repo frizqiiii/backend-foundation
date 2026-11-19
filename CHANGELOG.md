@@ -151,6 +151,10 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   (ditarik 18 Nov 2026) tidak pernah perlu diizinkan.
 - **Alasan entri allowlist `zod` diperbarui:** `scopes` dan `eventTypes` sudah dibatasi `.max()` (#86), bukan lagi
   "direncanakan terpisah". Tanggal `reviewBy` tetap 2027-02-01.
+- **Gauge `queue_worker_up` dan `queue_jobs_total` tidak lagi basi:** saat koneksi Redis aplikasi tidak siap
+  atau pembacaan Redis gagal/timeout saat scrape, seri yang bersangkutan dihapus dari `/metrics` (sebelumnya
+  tertinggal di nilai terakhir dan terbaca seolah-olah masih benar). Seri yang hilang berarti "tidak diketahui":
+  alert berbasis `== 0`/`> 0` tidak menyala selama itu, dan kondisi Redis mati ditangani `RedisDown`.
 - **`aquasecurity/trivy-action` di-pin ke SHA commit penuh** (temuan T10), bukan `@master`: ref yang bisa
   berubah pada scanner keamanan adalah risiko rantai pasok (insiden 2026-03-19, tag action di-force-push ke
   malware). Lihat `docs/sbom-and-signing.md`.
