@@ -2,6 +2,7 @@ import { WebhookService } from './webhook.service';
 import type { WebhookRepository } from './webhook.repository';
 import { encryptionService } from '../../shared/security/encryption.service';
 import { enqueueWebhookDelivery } from '../../shared/queue/webhook-delivery.queue';
+import { assertSafeOutboundUrl } from '../../shared/security/ssrf-guard';
 import { NotFoundError } from '../../shared/utils/http-error';
 
 jest.mock('../../shared/queue/webhook-delivery.queue', () => ({
@@ -9,6 +10,16 @@ jest.mock('../../shared/queue/webhook-delivery.queue', () => ({
 }));
 
 const mockedEnqueue = enqueueWebhookDelivery as jest.Mock;
+
+// `register` memanggil `assertSafeOutboundUrl`, yang melakukan resolusi DNS nyata (`dns.promises.lookup`):
+// tanpa mock, tes ini bergantung pada jaringan. Guard-nya sendiri sudah diuji di `ssrf-guard.spec.ts`
+// dengan DNS yang di-mock; di sini cukup dikunci KETERHUBUNGANNYA (dipanggil dengan URL, dan
+// penolakannya menghentikan penyimpanan).
+jest.mock('../../shared/security/ssrf-guard', () => ({
+  assertSafeOutboundUrl: jest.fn(),
+}));
+
+const mockedAssertSafeOutboundUrl = assertSafeOutboundUrl as jest.Mock;
 
 describe('WebhookService', () => {
   let webhookRepository: jest.Mocked<WebhookRepository>;
@@ -30,6 +41,7 @@ describe('WebhookService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedAssertSafeOutboundUrl.mockReset().mockResolvedValue(undefined);
     webhookRepository = {
       create: jest.fn(),
       findManyForUser: jest.fn(),
@@ -57,6 +69,34 @@ describe('WebhookService', () => {
       expect(createArgs.encryptedSecret).not.toBe(result.secret);
       expect(encryptionService.decrypt(createArgs.encryptedSecret)).toBe(result.secret);
       expect(result.secret).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it('memeriksa URL dengan SSRF guard sebelum menyimpan endpoint', async () => {
+      webhookRepository.create.mockResolvedValue({
+        ...storedEndpoint,
+        secret: 'irrelevant-encrypted-value',
+      });
+
+      await webhookService.register(owner, {
+        url: 'https://example.com/webhook',
+        eventTypes: ['product.created'],
+      });
+
+      expect(mockedAssertSafeOutboundUrl).toHaveBeenCalledWith('https://example.com/webhook');
+    });
+
+    it('guard MENOLAK URL → error dilempar apa adanya dan endpoint TIDAK disimpan', async () => {
+      mockedAssertSafeOutboundUrl.mockRejectedValue(
+        new Error('URL menunjuk ke host yang tidak diizinkan')
+      );
+
+      await expect(
+        webhookService.register(owner, {
+          url: 'http://localhost:3000/hook',
+          eventTypes: ['product.created'],
+        })
+      ).rejects.toThrow('URL menunjuk ke host yang tidak diizinkan');
+      expect(webhookRepository.create).not.toHaveBeenCalled();
     });
   });
 
