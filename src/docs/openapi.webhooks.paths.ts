@@ -46,6 +46,7 @@ export const webhooksPaths = {
                   type: 'array',
                   items: { type: 'string', enum: [...WEBHOOK_EVENT_TYPE_LIST] },
                   minItems: 1,
+                  maxItems: WEBHOOK_EVENT_TYPE_LIST.length,
                   example: ['product.created'],
                 },
               },

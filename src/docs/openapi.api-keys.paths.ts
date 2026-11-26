@@ -1,4 +1,6 @@
 import { errorResponse, validationErrorResponse, serverErrorResponse } from './openapi.shared';
+import { MAX_SCOPE_LENGTH } from '../modules/api-keys/api-key.dto';
+import { getPermissionsForRole } from '../shared/security/permissions';
 
 const unauthorized = errorResponse(
   'Access token tidak ada/tidak valid/kedaluwarsa',
@@ -29,7 +31,12 @@ export const apiKeysPaths = {
               required: ['name'],
               properties: {
                 name: { type: 'string', minLength: 1, maxLength: 100, example: 'CI pipeline' },
-                scopes: { type: 'array', items: { type: 'string' }, example: ['event.read'] },
+                scopes: {
+                  type: 'array',
+                  items: { type: 'string', maxLength: MAX_SCOPE_LENGTH },
+                  maxItems: getPermissionsForRole('ADMIN').length,
+                  example: ['event.read'],
+                },
                 expiresAt: { type: 'string', format: 'date-time', nullable: true },
               },
             },
