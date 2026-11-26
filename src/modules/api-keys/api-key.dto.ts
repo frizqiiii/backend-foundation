@@ -3,7 +3,7 @@ import { getPermissionsForRole } from '../../shared/security/permissions';
 
 // Nama permission terpanjang saat ini 19 karakter (`feature-flag.manage`); 64 memberi margin tanpa membuka pintu
 // string berukuran besar (nilai yang tak dikenal tetap ditolak 403 oleh Service, tapi namanya ikut dipantulkan di pesan).
-const MAX_SCOPE_LENGTH = 64;
+export const MAX_SCOPE_LENGTH = 64;
 
 /**
  * `scopes` opsional — array KOSONG/tidak diisi berarti key mewarisi

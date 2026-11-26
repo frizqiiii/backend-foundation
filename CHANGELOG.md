@@ -155,6 +155,10 @@ untuk rincian teknis dan batasannya, buka dokumen yang disebutkan di tiap baris.
   atau pembacaan Redis gagal/timeout saat scrape, seri yang bersangkutan dihapus dari `/metrics` (sebelumnya
   tertinggal di nilai terakhir dan terbaca seolah-olah masih benar). Seri yang hilang berarti "tidak diketahui":
   alert berbasis `== 0`/`> 0` tidak menyala selama itu, dan kondisi Redis mati ditangani `RedisDown`.
+- **Dokumentasi OpenAPI memuat batas ukuran array:** `scopes` (API key) dan `eventTypes` (webhook) kini
+  menampilkan `maxItems` (dan `maxLength` per scope) di `/api-docs`, diambil dari sumber yang sama dengan validasi
+  zod (`getPermissionsForRole('ADMIN')`, `WEBHOOK_EVENT_TYPE_LIST`, `MAX_SCOPE_LENGTH`). Tes baru
+  `openapi.limits.spec.ts` mengunci angka di dokumentasi ke perilaku zod yang sebenarnya.
 - **`aquasecurity/trivy-action` di-pin ke SHA commit penuh** (temuan T10), bukan `@master`: ref yang bisa
   berubah pada scanner keamanan adalah risiko rantai pasok (insiden 2026-03-19, tag action di-force-push ke
   malware). Lihat `docs/sbom-and-signing.md`.
